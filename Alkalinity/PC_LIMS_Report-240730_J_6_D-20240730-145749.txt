@@ -1,0 +1,167 @@
+$S PC/LIMS V1
+$S Devices V1
+$S device PC Control V1
+P 3.0	S 2213520755
+$E
+$S device 841 Titrando V1
+P 5.841.0014	S 02102
+$S ADC1
+ADC 3.770.0110	S 08679
+$E
+$S MSB1
+$S 801
+S 06255	
+$E
+$E
+$S MSB3
+$S 800
+S 06203	
+$E
+$E
+$E
+$E
+$S Sample data V1
+240730_J_6_D		10.0	mL
+$E
+$S MPL V1
+$S Mode 1
+1	0.0	3.150	2.30000	0.0	25.0
+2	2.0	3.149	2.31600	501.0	25.0
+3	4.0	3.146	2.33300	510.0	25.0
+4	6.0	3.140	2.35000	521.6	25.0
+5	8.0	3.130	2.36700	515.5	25.0
+6	10.0	3.120	2.38400	507.1	25.0
+7	12.0	3.116	2.40100	505.7	25.0
+8	14.0	3.103	2.41800	501.7	25.0
+9	16.0	3.104	2.43400	492.9	25.0
+10	18.0	3.098	2.45100	493.3	25.0
+11	20.0	3.089	2.46700	490.3	25.0
+12	22.0	3.085	2.48300	487.4	25.0
+13	24.0	3.081	2.49900	488.6	25.0
+14	26.0	3.076	2.51600	481.4	25.0
+15	28.0	3.069	2.53200	483.7	25.0
+16	30.0	3.065	2.54800	479.8	25.0
+17	32.0	3.059	2.56300	477.4	25.0
+18	34.0	3.052	2.57900	477.6	25.0
+19	36.0	3.043	2.59500	474.8	25.0
+20	38.0	3.045	2.61100	472.4	25.0
+21	40.0	3.038	2.62700	473.4	25.0
+22	42.0	3.035	2.64200	472.3	25.0
+23	44.0	3.024	2.65800	471.1	25.0
+24	46.0	3.022	2.67400	468.0	25.0
+25	48.0	3.016	2.68900	469.9	25.0
+26	50.0	3.017	2.70500	468.8	25.0
+27	52.0	3.007	2.71800	411.7	25.0
+28	54.0	3.008	2.73400	442.5	25.0
+29	56.0	3.000	2.74900	482.5	25.0
+30	58.0	3.000	2.76100	396.5	25.0
+31	60.0	2.994	2.76700	360.9	25.0
+32	62.0	2.994	2.76700	324.3	25.0
+33	64.0	2.995	2.76700	294.5	25.0
+34	66.0	2.995	2.76700	261.4	25.0
+35	68.0	2.995	2.76700	135.0	25.0
+36	70.0	2.995	2.76700	9.1	25.0
+37	70.9	2.995	2.76700	8.4	25.0
+$E
+$E
+$S DETERM V1
+$S Props V1.1
+Total_Alkalinity	modified	240730_J_6_D-20240730-145749	2024-07-30 14:57:49+08:00	original	Regular without errors	24368558_Pippa	10																												
+$E
+$S Results V1
+$S Result 1C.R1 V1
+Initial pH	8.0774		0
+$E
+$S Result 1C.R2 V1
+AcidConc	0.0120	mol/L	0
+$E
+$E
+$S Mode 1 V1
+$S EP V1
+2.7670	2.995		70.9	25.0
+$E
+$S Cal V1
+$E
+$E
+$S Other Variables V1
+$S System V1
+317.0	10	7675	0			0		0
+$E
+$S Mode 1 V1.1
+0.01	0.01205	2.7670	305.2	2.3000	8.077	25.0	3.150	25.0	234.2	2.995	25.0				6.970	99.8		37			Regular stop
+$E
+$S Statistic V1
+$E
+$S ComVar local V1
+$E
+$S Titrant V1
+$S Titrant1 V1
+Hydrochloric Acid	0.01205	mol/L	0.01	mol/L		2024-07-19 10:37:14
+$E
+$E
+$S Sensor V1
+$S Sensor1 V1.1
+pH electrode	99.8	6.970	25.0	(manual)	2024-07-30 13:48:23+08:00	pH Calibration	24368558_Pippa
+$E
+$E
+$E
+$S Calc Vars V1
+$S Calc1 V1
+$S R1 V1
+MIM	8.077	
+$E
+$S R2 V1
+CONC	0.01205	
+$E
+$E
+$E
+$S Messages V1
+$E
+$E
+$S Methodproperties V1
+Total_Alkalinity	modified	hug164	2020-10-15 09:18:30+08:00	Luka23609731	2024-06-07 12:33:17+08:00	ver. 4																												
+$E
+$S Method V1
+$S Methodoptions V1.1
+off	2	off	Identification 1	Identification 2	on	off	on	10.0	mL	off	0	9999999999	off	30 s	on	Alkalinity method puts out a pclims report to 
+card1.  A vba form in excel uses this lims
+report to calculate alkalinity. Standardise
+HCl titrant against 10ml of Na2CO3 (0.0025M)
+and titrate as for samples. Calc. [HCl] mole/L
+and enter this value in titrant concn in
+pc control / system.	on	off	Card 1		Identification 1	on	on	off	on	on		**************	on
+$E
+$S 01	SET pH	Set endpoint titration pH
+Titrando 1	off	30 s	150 s	2.3 mL	10 mL/min	10 s	60 s	3.00	optimal	2.000	10.00 mL/min	25.00 킠/min	drift	20 킠/min	10 s	off	optimal	2.000	10.00 mL/min	25.00 킠/min	drift	20 킠/min	10 s	auto	0 s	25.0 캜	2.0 s	100.000 mL	off	maximum	on	1	100.000 mL	1	pH electrode	off	3	Hydrochloric Acid	1	15	on	off	20 킠/min	off	0.0 킠/min	off	20.0000 mL	off	off
+$E
+$S 02	CALC	Calculation
+$S R1
+1	Initial pH	MIM	4		0	off	off	24	on	off	Round	off	0.0	9999999999	Display message	
+The following variable is used:
+
+EP1= Endpoint volume	
+Please consider the information 
+in the note under edit result.
+$E
+$S R2
+2	AcidConc	CONC	4	mol/L	1	off	off	24	on	off	Round	off	invalid	invalid	Display message	
+The following variable is used:
+
+EP1= Endpoint volume	
+Please consider the information 
+in the note under edit result.
+$E
+$E
+$S 03	REPORT	Report
+$S Reportoptions V1
+on each page	off	on
+$E
+$S Result report
+on	on	off	off	on	off	on	on	on	off
+$E
+$S Curve
+1	off	Time	Volume	blue	none	magenta	on	off	88 %	34 %
+$E
+$E
+$E
+$E

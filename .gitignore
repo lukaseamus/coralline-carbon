@@ -47,3 +47,17 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# RDataTmp
+.RDataTmp*
+
+# macOS specific
+.DS_store
+
+# generic R plots
+*.pdf
+*.png
+Plots
+
+# Stan outputs
+Stan

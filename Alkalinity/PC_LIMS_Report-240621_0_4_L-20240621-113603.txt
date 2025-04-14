@@ -1,0 +1,200 @@
+$S PC/LIMS V1
+$S Devices V1
+$S device PC Control V1
+P 3.0	S 2213520755
+$E
+$S device 841 Titrando V1
+P 5.841.0014	S 02102
+$S ADC1
+ADC 3.770.0110	S 08679
+$E
+$S MSB1
+$S 801
+S 06255	
+$E
+$E
+$S MSB3
+$S 800
+S 06203	
+$E
+$E
+$E
+$E
+$S Sample data V1
+240621_0_4_L		10.0	mL
+$E
+$S MPL V1
+$S Mode 1
+1	0.0	3.490	2.50000	0.0	25.0
+2	2.0	3.489	2.53000	1029.9	25.0
+3	4.0	3.477	2.56500	1085.1	25.0
+4	6.0	3.450	2.59900	1021.1	25.0
+5	8.0	3.412	2.61600	719.5	25.0
+6	10.0	3.408	2.63300	416.1	25.0
+7	12.0	3.397	2.65900	785.9	25.0
+8	14.0	3.380	2.68800	879.2	25.0
+9	16.0	3.363	2.71500	823.6	25.0
+10	18.0	3.352	2.74100	789.5	25.0
+11	20.0	3.329	2.76300	735.7	25.0
+12	22.0	3.328	2.78300	527.8	25.0
+13	24.0	3.309	2.80700	738.9	25.0
+14	26.0	3.298	2.83000	708.4	25.0
+15	28.0	3.286	2.85300	685.9	25.0
+16	30.0	3.277	2.87500	668.2	25.0
+17	32.0	3.266	2.89700	656.9	25.0
+18	34.0	3.257	2.91800	642.9	25.0
+19	36.0	3.242	2.93900	629.5	25.0
+20	38.0	3.232	2.95900	594.9	25.0
+21	40.0	3.230	2.98000	600.0	25.0
+22	42.0	3.219	2.99900	594.9	25.0
+23	44.0	3.211	3.01900	595.5	25.0
+24	46.0	3.202	3.03800	569.2	25.0
+25	48.0	3.197	3.05700	565.8	25.0
+26	50.0	3.188	3.07600	563.1	25.0
+27	52.0	3.184	3.09400	550.2	25.0
+28	54.0	3.176	3.11200	555.5	25.0
+29	56.0	3.171	3.13100	546.4	25.0
+30	58.0	3.162	3.14800	541.4	25.0
+31	60.0	3.157	3.16600	533.5	25.0
+32	62.0	3.150	3.18400	529.3	25.0
+33	64.0	3.141	3.20100	523.1	25.0
+34	66.0	3.129	3.21800	514.0	25.0
+35	68.0	3.127	3.23500	509.4	25.0
+36	70.0	3.123	3.25200	505.8	25.0
+37	72.0	3.119	3.26900	504.7	25.0
+38	74.0	3.111	3.28600	502.2	25.0
+39	76.0	3.108	3.30200	500.8	25.0
+40	78.0	3.104	3.31900	494.0	25.0
+41	80.0	3.098	3.33500	492.4	25.0
+42	82.0	3.093	3.35200	491.3	25.0
+43	84.0	3.082	3.36800	488.7	25.0
+44	86.0	3.080	3.38400	483.1	25.0
+45	88.0	3.076	3.40000	483.1	25.0
+46	90.0	3.070	3.41600	478.6	25.0
+47	92.0	3.068	3.43200	479.0	25.0
+48	94.0	3.059	3.44800	479.0	25.0
+49	96.0	3.056	3.46400	479.0	25.0
+50	98.0	3.051	3.48000	474.9	25.0
+51	100.0	3.048	3.49600	473.2	25.0
+52	102.0	3.044	3.51200	473.4	25.0
+53	104.0	3.041	3.52700	474.9	25.0
+54	106.0	3.035	3.54300	471.2	25.0
+55	108.0	3.032	3.55900	470.3	25.0
+56	110.0	3.028	3.57400	472.5	25.0
+57	112.0	3.025	3.59000	469.2	25.0
+58	114.0	3.019	3.60600	470.3	25.0
+59	116.0	3.013	3.62100	468.7	25.0
+60	118.0	3.011	3.63700	468.0	25.0
+61	120.0	3.007	3.65300	468.0	25.0
+62	122.0	2.997	3.66500	458.2	25.0
+63	124.0	3.001	3.67400	324.2	25.0
+64	126.0	2.997	3.68600	332.9	25.0
+65	128.0	2.995	3.68600	301.5	25.0
+66	130.0	2.995	3.68600	275.6	25.0
+67	132.0	2.994	3.68600	253.8	25.0
+68	134.0	2.994	3.68600	195.3	25.0
+69	136.0	2.993	3.68600	34.8	25.0
+70	137.6	2.993	3.68600	8.4	25.0
+$E
+$E
+$S DETERM V1
+$S Props V1.1
+Total_Alkalinity	modified	240621_0_4_L-20240621-113603	2024-06-21 11:36:03+08:00	original	Regular without errors	Luka23609731	1																												
+$E
+$S Results V1
+$S Result 1C.R1 V1
+Initial pH	7.7634		0
+$E
+$S Result 1C.R2 V1
+AcidConc	0.0120	mol/L	0
+$E
+$E
+$S Mode 1 V1
+$S EP V1
+3.6860	2.993		137.6	25.0
+$E
+$S Cal V1
+$E
+$E
+$S Other Variables V1
+$S System V1
+386.0	1	7511	0			0		0
+$E
+$S Mode 1 V1.1
+0.01	0.01202	3.6860	373.1	2.5000	7.763	25.0	3.490	25.0	235.5	2.993	25.0				6.984	98.8		70			Regular stop
+$E
+$S Statistic V1
+$E
+$S ComVar local V1
+$E
+$S Titrant V1
+$S Titrant1 V1
+Hydrochloric Acid	0.01202	mol/L	0.01	mol/L		2005-03-02 11:37:56
+$E
+$E
+$S Sensor V1
+$S Sensor1 V1.1
+pH electrode	98.8	6.984	0.00	25.0	(manual)	2024-06-19 13:52:33+08:00	pH Calibration	Luka23609731
+$E
+$E
+$E
+$S Calc Vars V1
+$S Calc1 V1
+$S R1 V1
+MIM	7.763	
+$E
+$S R2 V1
+CONC	0.01202	
+$E
+$E
+$E
+$S Messages V1
+$E
+$E
+$S Methodproperties V1
+Total_Alkalinity	modified	hug164	2020-10-15 09:18:30+08:00	Luka23609731	2024-06-07 12:33:17+08:00	ver. 4																												
+$E
+$S Method V1
+$S Methodoptions V1.1
+off	2	off	Identification 1	Identification 2	on	off	on	10.0	mL	off	0	9999999999	off	30 s	on	Alkalinity method puts out a pclims report to 
+card1.  A vba form in excel uses this lims
+report to calculate alkalinity. Standardise
+HCl titrant against 10ml of Na2CO3 (0.0025M)
+and titrate as for samples. Calc. [HCl] mole/L
+and enter this value in titrant concn in
+pc control / system.	on	off	Card 1		Identification 1	on	on	off	on	on		**************	on
+$E
+$S 01	SET pH	Set endpoint titration pH
+Titrando 1	off	30 s	150 s	2.5 mL	10 mL/min	10 s	60 s	3.00	optimal	2.000	10.00 mL/min	25.00 킠/min	drift	20 킠/min	10 s	off	optimal	2.000	10.00 mL/min	25.00 킠/min	drift	20 킠/min	10 s	auto	0 s	25.0 캜	2.0 s	100.000 mL	off	maximum	on	1	100.000 mL	1	pH electrode	off	3	Hydrochloric Acid	1	15	on	off	20 킠/min	off	0.0 킠/min	off	20.0000 mL	off	off
+$E
+$S 02	CALC	Calculation
+$S R1
+1	Initial pH	MIM	4		0	off	off	24	on	off	Round	off	0.0	9999999999	Display message	
+The following variable is used:
+
+EP1= Endpoint volume	
+Please consider the information 
+in the note under edit result.
+$E
+$S R2
+2	AcidConc	CONC	4	mol/L	1	off	off	24	on	off	Round	off	invalid	invalid	Display message	
+The following variable is used:
+
+EP1= Endpoint volume	
+Please consider the information 
+in the note under edit result.
+$E
+$E
+$S 03	REPORT	Report
+$S Reportoptions V1
+on each page	off	on
+$E
+$S Result report
+on	on	off	off	on	off	on	on	on	off
+$E
+$S Curve
+1	off	Time	Volume	blue	none	magenta	on	off	88 %	34 %
+$E
+$E
+$E
+$E
