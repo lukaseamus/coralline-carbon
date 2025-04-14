@@ -59,50 +59,55 @@ require(patchwork)
 O2 %>%
   imap(~ .x %>%
         ggplot() +
+          geom_hline(yintercept = 0) +
           geom_point(aes(delta_t, Value), shape = 16, alpha = 0.2) +
-          coord_cartesian(ylim = c(0, NA)) +
           theme_minimal() +
           theme(panel.grid = element_blank()) +
           ggtitle(.y)
        ) %>%
   wrap_plots() %>%
-  ggsave(filename = "O2_data.pdf", path = here("Plots"), 
+  ggsave(filename = "O2_data.pdf", path = "Plots", 
          width = 100, height = 50, unit = "cm", device = cairo_pdf)
-# There are some nonsensical measurement series due to miscalibration. These are
+# First there are some negative values which are impossible. Then there are some 
+# completely nonsensical measurement series due to miscalibration. These are
 # M_5_D, M_5_L, M_6_D, M_6_L, B_7_D, B_7_L, J_7_D, J_7_L.
-# Another way to check this is to filter for values greater than 1000 µM, which
-# are practically impossible:
+
+# Another way to check this is to filter for values < 0 or > 1000 µM, which
+# are (practically) impossible:
 O2 %>%
   map(~ .x %>%
-        filter(Value > 1e3)) %>%
+        filter(Value > 1e3 | Value < 0)) %>%
   bind_rows() %>%
   group_by(ID) %>%
-  summarise(mean = mean(Value),
+  summarise(min = min(Value),
+            max = max(Value),
             n = length(Value))
 # A few other measurement series also get flagged because they had substantial 
-# measurement error with some outliers above 1000 µM. But A_1_L, J_1_L, M_1_L,
-# A_4_L, J_4_L, M_4_L, A_6_L, M_7_L, and A_9_L all have the right shape according
-# to the plot, so can be retained.
+# measurement error with some outliers above 1000 µM. M_1_L needs it's negative
+# outlier removed but with A_1_L, J_1_L, A_4_L, J_4_L, M_4_L, A_6_L, M_7_L, and A_9_L 
+# it has the right shape according to the plot, so can be retained.
 
 # 2.2 Clean data ####
 require(magrittr)
 O2 %<>%
   map(~ .x %>%
-        filter(!ID %in% c("M_5_D", "M_5_L", "M_6_D", "M_6_L", 
-                          "B_7_D", "B_7_L", "J_7_D", "J_7_L"))) %>%
+        filter(!ID %in% c("M_5_D", "M_5_L", "M_6_D", "M_6_L", # filter out bad measurements
+                          "B_7_D", "B_7_L", "J_7_D", "J_7_L") &
+                 Value >= 0)) %>% # filter out negative values
   keep(~ nrow(.x) > 0)
-  
+
+# Visualise clean data
 O2 %>%
   imap(~ .x %>%
         ggplot() +
+          geom_hline(yintercept = 0) +
           geom_point(aes(delta_t, Value), shape = 16, alpha = 0.2) +
-          coord_cartesian(ylim = c(0, NA)) +
           theme_minimal() +
           theme(panel.grid = element_blank()) +
           ggtitle(.y)
        ) %>%
   wrap_plots() %>%
-  ggsave(filename = "O2_data.pdf", path = here("Plots"), 
+  ggsave(filename = "O2_data_cleaned.pdf", path = "Plots", 
          width = 100, height = 50, unit = "cm", device = cairo_pdf)
 
 # The biggest problem about this is that two of these measurements are blanks, 
@@ -112,13 +117,13 @@ O2 %>%
 # separately in a single dataframe rather than a list of dataframes.
 
 O2_B_L <- O2 %>% 
-  map(~ .x %>% filter(ID %>% str_detect("B") & 
-                        ID %>% str_detect("L"))) %>%
+  map(~ .x %>% filter(ID %>% str_detect("B") & # select blanks
+                        ID %>% str_detect("L"))) %>% # select light
   keep(~ nrow(.x) > 0)
 
 O2_B_D <- O2 %>% 
-  map(~ .x %>% filter(ID %>% str_detect("B") & 
-                        ID %>% str_detect("D"))) %>%
+  map(~ .x %>% filter(ID %>% str_detect("B") & # select blanks
+                        ID %>% str_detect("D"))) %>% # select dark
   keep(~ nrow(.x) > 0)
 
 # 2.3 Model selection ####
@@ -128,13 +133,13 @@ O2_B_D <- O2 %>%
 # models needs to be fit to light and dark data. The easiest way is to split the data.
 
 O2_L <- O2 %>% 
-  map(~ .x %>% filter(ID %>% str_detect("L") & 
-                        !ID %>% str_detect("B"))) %>%
+  map(~ .x %>% filter(ID %>% str_detect("L") & # select light
+                        !ID %>% str_detect("B"))) %>% # remove blanks
   keep(~ nrow(.x) > 0)
   
 O2_D <- O2 %>% 
-  map(~ .x %>% filter(ID %>% str_detect("D") & 
-                        !ID %>% str_detect("B"))) %>%
+  map(~ .x %>% filter(ID %>% str_detect("D") & # select dark
+                        !ID %>% str_detect("B"))) %>% # remove blanks
   keep(~ nrow(.x) > 0)
 
 # There are a variety of saturating models to choose from that describe an increase towards 
@@ -162,7 +167,7 @@ O2_D <- O2 %>%
 # example parameter values
 O2_0 <- 230 # rounded regional empirical mean (228 µM)
 O2_max <- 1e3 - O2_0 # the usual supersaturation limit (1000 µM) minus the intercept
-beta <- 17 # assuming saturation in one hour
+beta <- 13 # no usable literature data (assuming saturation in one hour as O2_max / 60)
 
 tibble(t = seq(0, 120)) %>% # each incubation ran for two hours
   mutate(lm = O2_0 + beta * t, # linear model for comparison
@@ -184,9 +189,9 @@ tibble(t = seq(0, 120)) %>% # each incubation ran for two hours
 tibble(n = 1:1e3,
        # gamma distribution is reparameterised in terms of mean and sd
        O2_max = rgamma(n = 1e3, shape = O2_max^2 / 100^2, rate = O2_max / 100^2), 
-       # beta can theoretically take negative values (net respiration in light)
-       beta = rnorm(n = 1e3, mean = beta, sd = 5),
-       O2_0 = rgamma(n = 1e3, shape = O2_0^2 / 50^2, rate = O2_0 / 50^2)) %>%
+       # in this model the slope has to be greater than zero
+       beta = rgamma(n = 1e3, shape = beta^2 / 6^2, rate = beta / 6^2),
+       O2_0 = rgamma(n = 1e3, shape = O2_0^2 / 20^2, rate = O2_0 / 20^2)) %>%
   expand_grid(t = seq(0, 120)) %>%
   mutate(O2 = O2_0 + O2_max * tanh( beta * t / O2_max )) %>%
   ggplot(aes(t, O2, group = n)) +
@@ -195,8 +200,7 @@ tibble(n = 1:1e3,
     coord_cartesian(expand = F, clip = "off") +
     theme_minimal() +
     theme(panel.grid = element_blank())
-# Some impossible values (negative O2 concentrations don't exist) may appear, 
-# but I want to allow sufficient variability in beta.
+# Looks like plenty of variability.
 
 # 2.4.2 Run model ####
 O2_L_ht_stan <- "
@@ -208,16 +212,16 @@ data{
 
 parameters{
   real<lower=0> O2_max;
-  real beta;
+  real<lower=0> beta;
   real<lower=0> O2_0;
   real<lower=0> sigma;
 }
 
 model{
   // Priors
-  O2_0 ~ gamma( 230^2 / 100^2, 230 / 100^2 ); // reparameterised with mean and sd
-  beta ~ normal( 17, 10 );
-  O2_max ~ gamma( 770^2 / 200^2, 770 / 200^2 );
+  O2_0 ~ gamma( 230^2 / 20^2, 230 / 20^2 ); // reparameterised with mean and sd
+  beta ~ gamma( 13^2 / 6^2, 13 / 6^2 );
+  O2_max ~ gamma( 770^2 / 100^2, 770 / 100^2 );
   sigma ~ exponential( 1 );
 
   // Model
@@ -244,9 +248,8 @@ O2_L_ht_samples <- O2_L %>%
       compose_data(), 
     chains = 8,
     parallel_chains = parallel::detectCores(),
-    iter_warmup = 1e3, 
-    iter_sampling = 1e3,
-    output_dir = here("Stan")))
+    iter_warmup = 1e4, 
+    iter_sampling = 1e4))
 
 # 2.4.3 Model checks ####
 # check Rhat, effective sample size and chains
@@ -263,27 +266,32 @@ O2_L_ht_samples %>%
 # good effective sample size
 
 require(bayesplot)
-O2_L_ht_samples %>%
-  map(~ .x$draws(format = "df") %>%
-        mcmc_rank_overlay()) %>%
-  wrap_plots() +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "top")
+ggsave(
+  O2_L_ht_samples %>%
+    map(~ .x$draws(format = "df") %>%
+          mcmc_rank_overlay()) %>%
+    wrap_plots() +
+    plot_layout(guides = "collect") &
+    theme(legend.position = "top"),
+  filename = "O2_L_ht_rank.pdf", path = "Plots", 
+  width = 80, height = 40, unit = "cm", device = cairo_pdf)
 # chains look good
 
-kinetics_standard_ht_samples %>%
+O2_L_ht_samples %>%
   map(~ .x$draws(format = "df") %>%
-        mcmc_pairs(pars = c("Fmax", "beta", "F0"))) %>%
-  wrap_plots()
+        mcmc_pairs(pars = c("O2_max", "beta", "O2_0"))) %>%
+  wrap_plots() %>%
+  ggsave(filename = "O2_L_ht_pairs.pdf", path = "Plots", 
+         width = 80, height = 40, unit = "cm", device = cairo_pdf)
 # some correlation between Fmax and beta, indicating some interdependence
 
 # 2.4.4 Prior-posterior comparison ####
 source("functions.R")
 # sample prior
-kinetics_standard_ht_prior <- kinetics %>%
-  map(~ prior_samples(model = kinetics_standard_ht_mod,
-                      data = .x$standard %>%
-                        select(Fluorescence, Concentration) %>%
+O2_L_ht_prior <- O2_L %>%
+  map(~ prior_samples(model = O2_L_ht_mod,
+                      data = .x %>% 
+                        select(Value, delta_t) %>%
                         compose_data(),
                       chains = 8, samples = 1e4))
 
