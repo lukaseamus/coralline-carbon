@@ -149,7 +149,7 @@ $E
 $E
 $S Sensor V1
 $S Sensor1 V1.1
-pH electrode	99.3	6.817	0.00	25.0	(manual)	2025-02-27 12:29:37+08:00	pH Calibration	24368558_Pippa
+pH electrode	99.3	6.817	25.0	(manual)	2025-02-27 12:29:37+08:00	pH Calibration	24368558_Pippa
 $E
 $E
 $E

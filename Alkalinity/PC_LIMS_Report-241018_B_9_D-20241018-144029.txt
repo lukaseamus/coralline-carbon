@@ -132,7 +132,7 @@ $E
 $E
 $S Sensor V1
 $S Sensor1 V1.1
-pH electrode	99.6	6.896	0.00	25.0	(manual)	2024-10-18 08:38:43+08:00	pH Calibration	pat297
+pH electrode	99.6	6.896	25.0	(manual)	2024-10-18 08:38:43+08:00	pH Calibration	pat297
 $E
 $E
 $E
