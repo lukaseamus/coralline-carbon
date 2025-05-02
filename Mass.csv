@@ -1,4 +1,4 @@
-﻿ID,Date,Site,Species,Individual,BM,DM,DMi,Tube,DMo
+﻿ID,Date,Site,Species,Individual,BM,DM,DMi,Tube,POM_Tube
 A_1,17.05.24,Peron,Amphiroa anceps,1,10.65,5.50398,5.41449,12.86866,13.17107
 J_1,17.05.24,Peron,Jania rosea,1,8.21,1.98413,1.95158,12.82322,13.03768
 M_1,17.05.24,Peron,Metamastophora flabellata,1,6.39,1.15165,1.14412,12.87164,13.14014
@@ -41,12 +41,12 @@ M_13,11.09.24,Peron,Metamastophora flabellata,13,6.01,0.78026,0.4788,12.88212,12
 A_14,20.01.25,Peron,Amphiroa anceps,14,8.56,4.40761,1.13531,12.85719,12.93327
 J_14,20.01.25,Peron,Jania rosea,14,10.3,2.02449,1.00827,12.87939,13.00859
 M_14,20.01.25,Peron,Metamastophora flabellata,14,9.24,1.221,0.9842,12.92855,13.22381
-A_15_1,20.01.25,Peron,Amphiroa anceps,15,6.79,3.22801,1.21145,12.90658,12.92292
-A_15_2,20.01.25,Peron,Amphiroa anceps,15,5.62,2.54082,1.07266,12.81415,12.99077
+A_15_1,20.01.25,Peron,Amphiroa anceps,15_1,6.79,3.22801,1.21145,12.90658,12.92292
+A_15_2,20.01.25,Peron,Amphiroa anceps,15_2,5.62,2.54082,1.07266,12.81415,12.99077
 M_15,20.01.25,Peron,Metamastophora flabellata,15,8.15,1.58846,1.04317,12.92528,13.24036
 A_16,20.01.25,Peron,Amphiroa anceps,16,8.37,4.17994,1.14336,12.85116,12.95191
-M_16_1,20.01.25,Peron,Metamastophora flabellata,16,8.21,1.4018,1.14401,12.93213,13.28254
-M_16_2,20.01.25,Peron,Metamastophora flabellata,16,9.66,1.47591,1.07492,12.89108,13.17956
+M_16_1,20.01.25,Peron,Metamastophora flabellata,16_1,8.21,1.4018,1.14401,12.93213,13.28254
+M_16_2,20.01.25,Peron,Metamastophora flabellata,16_2,9.66,1.47591,1.07492,12.89108,13.17956
 A_17,07.03.25,Peron,Amphiroa anceps,17,8.05,3.81016,1.0685,12.81646,12.90899
 J_17,07.03.25,Peron,Jania rosea,17,9.9,2.22422,1.08753,12.85618,13.01409
 M_17,07.03.25,Peron,Metamastophora flabellata,17,8.94,1.10244,0.90683,12.8935,13.14199

@@ -59,6 +59,5 @@ rsconnect/
 *.png
 Plots
 
-# Intermediate csv files
-O2_estimates.csv
-O2_estimates_summary.csv
+# Intermediate rds files
+*.rds

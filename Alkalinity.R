@@ -842,7 +842,8 @@ require(seacarb)
 TA_standard <- TA_standard_samples %>%
   spread_draws(TA_mu, TA_sigma) %>%
   mutate(TA_measured = rgamma( n() , TA_mu^2 / TA_sigma^2 , TA_mu / TA_sigma^2 ),
-         TA_true = rnorm( n() , 2202.05 , 0.98 ) * rho(S = 33.443, T = 25)[1] * 1e-3,
+         kg_L = rho(S = 33.443, T = 25) %>% as.numeric() * 1e-3,
+         TA_true = rnorm( n() , 2202.05 , 0.98 ) * kg_L,
          TA_ratio = TA_true / TA_measured,
          TA_diff = TA_measured - TA_true)
 
@@ -869,15 +870,7 @@ pH_TA %<>%
 # Get salinity data
 incu_meta <- read.csv("Incubation.csv") %>%
   mutate(ID = ID %>% fct(),
-         Round = if_else(
-                    str_length(ID) > 6,
-                    ID %>% 
-                      str_split(pattern = "_", n = 4) %>% 
-                      map_chr(2),
-                    ID %>% 
-                      str_split(pattern = "_", n = 3) %>% 
-                      map_chr(2)
-                    ) %>% fct(),
+         Round = Round %>% as.character() %>% fct(),
          Species = case_when(
                       is.na(Species) & ID %>% str_detect("^0") ~ "Initial",
                       is.na(Species) & ID %>% str_detect("B") ~ "Blank",
@@ -888,21 +881,42 @@ incu_meta <- read.csv("Incubation.csv") %>%
 pH_TA %<>%
   left_join(
     incu_meta %>% 
-      select(ID, Round, Species, Treatment, Salinity),
+      left_join(
+        incu_meta %>% 
+          filter(Species == "Initial") %>%
+          select(Round, Treatment, Salinity) %>%
+          rename(Salinity_initial = Salinity),
+        by = c("Round", "Treatment")
+      ) %>%
+      select(ID, Round, Species, Treatment, Salinity, Salinity_initial),
     by = "ID"
     )
 
 # Calculate DIC
 DIC_TA <- pH_TA %>% # seacarb::carb() takes TA in mol kg^-1,
-  mutate(DIC_calculated = carb(flag = 8, 
+  mutate(kg_L = rho(S = Salinity, T = Temp) %>% as.numeric() * 1e-3,
+         DIC_calculated = carb(flag = 8, 
                                var1 = pH_initial, # so the input needs to be converted from µM to mol kg^-1
-                               var2 = TA_corrected * 1e-6 / ( rho(S = Salinity, T = Temp)[1] * 1e-3 ),
+                               var2 = TA_corrected * 1e-6 / kg_L,
                                S = Salinity, 
                                T = Temp, # and the output needs to be back-converted from mol kg^-1 to µM
-                               pHscale = "F")$DIC * 1e6 * rho(S = Salinity, T = Temp)[1] * 1e-3)
+                               pHscale = "F")$DIC * 1e6 * kg_L)
+
+# Check success of calculation
+DIC_TA %>%
+  group_by(ID) %>%
+  summarise(Temp = mean(Temp),
+            pH_initial = mean(pH_initial),
+            TA_corrected = mean(TA_corrected),
+            Salinity = mean(Salinity),
+            kg_L = mean(kg_L),
+            DIC_calculated = mean(DIC_calculated)) %>%
+  print(n = 169)
+# Looks fine
 
 rm(pH_TA)
 
+# 4.3 TA vs. DIC ####
 # Viusalise TA and DIC using Deffeyes diagram
 # Generate values for pCO2 contours with µM TA and DIC input
 pCO2_contour <- DIC_TA %$% # simulate TA and DIC based on empirical TA and DIC ranges in µM
@@ -912,12 +926,13 @@ pCO2_contour <- DIC_TA %$% # simulate TA and DIC based on empirical TA and DIC r
               DIC_sim = seq(floor( min(DIC_calculated) / 100 ) * 100,
                             ceiling( max(DIC_calculated) / 100 ) * 100,
                             length.out = 1e3)) %>%
-  mutate(pCO2_sim = DIC_TA %$% 
-                      carb(flag = 15, # convert µM * 1e-6 = M and M / kg L^-1 = mol L^-1 * L kg^-1 = mol kg^-1
-                           var1 = TA_sim * 1e-6 / ( rho(S = mean(Salinity), T = unique(Temp))[1] * 1e-3 ), 
-                           var2 = DIC_sim * 1e-6 / ( rho(S = mean(Salinity), T = unique(Temp))[1] * 1e-3 ), 
-                           S = mean(Salinity),
-                           T = unique(Temp))$pCO2) # pH does not factor in the calculation, so no pH scale defined
+  mutate(kg_L = DIC_TA %$% rho(S = mean(Salinity), T = unique(Temp)) %>% as.numeric() * 1e-3, # calculate mean kg L^-1
+         pCO2_sim = carb(flag = 15, # convert µM * 1e-6 = M and M / kg L^-1 = mol L^-1 * L kg^-1 = mol kg^-1
+                         var1 = TA_sim * 1e-6 / kg_L, # pH does not factor in the calculation, so no pH scale defined
+                         var2 = DIC_sim * 1e-6 / kg_L, 
+                         S = DIC_TA %$% mean(Salinity), # DIC_TA is specified here rather than outside carb() because 
+                         T = DIC_TA %$% unique(Temp))$pCO2) # it also has a variable called kg_L
+
 require(geomtextpath)
 require(ggdensity)
 Fig_S3 <- DIC_TA %>%
@@ -959,10 +974,10 @@ Fig_S3 %>%
   ggsave(filename = "Fig_S3.pdf", path = "Figures",
          width = 22, height = 10, unit = "cm", device = cairo_pdf)
 
-# 4.3 ΔTA and ΔDIC ####
+# 4.4 ΔTA and ΔDIC ####
 DIC_TA %<>% 
   rename(TA = TA_corrected, DIC = DIC_calculated) %>%
-  select(-c(pH_initial, Temp)) %>%
+  select(-c(pH_initial, Temp)) %>% # pH and titration temperature are no longer needed
   filter(Species != "Initial") %>%
   mutate(Species = Species %>% fct_drop(),
          ID = ID %>% fct_drop()) %>%
@@ -973,27 +988,27 @@ DIC_TA %<>%
       select(starts_with("."), Round, Treatment, TA_initial, DIC_initial),
     by = c(".chain", ".iteration", ".draw", "Round", "Treatment")
   ) %>%
-  mutate(delta_TA = (TA - TA_initial) / 2, # calculate ΔTA and ΔDIC h^-1
-         delta_DIC = (DIC - DIC_initial) / 2) %>%
-  select(-c(TA, TA_initial, DIC, DIC_initial))
+  mutate(delta_TA_µM_h = (TA - TA_initial) / 2, # calculate ΔTA and ΔDIC in µM h^-1
+         delta_DIC_µM_h = (DIC - DIC_initial) / 2) %>%
+  select(-c(TA, DIC))
 
 DIC_TA
 
-# 4.4 Volume ####
+# 4.5 Volume ####
 # See details in Oxygen.R under 4.2 Volume.
-# 4.4.1 Prepare data ####
+# 4.5.1 Prepare data ####
 V <- incu_meta %>%
   filter(!is.na(Volume)) %>%
   mutate(Species = Species %>% fct_drop()) %>%
   select(ID, Species, Treatment, Volume)
 
-# 4.4.2 Prior simulation ####
+# 4.5.2 Prior simulation ####
 ggplot() +
   geom_density(aes(rgamma(1e5, 175^2 / 10^2, 175 / 10^2))) + # 10 mL seems like a reasonable sd
   theme_minimal() +
   theme(panel.grid = element_blank())
 
-# 4.4.3 Run model ####
+# 4.5.3 Run model ####
 V_stan <- "
 data{
   int n;
@@ -1037,7 +1052,7 @@ V_samples <- V_mod$sample(
     iter_warmup = 1e4,
     iter_sampling = 1e4)
 
-# 4.4.4 Model checks ####
+# 4.5.4 Model checks ####
 V_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat), # proportion > 1.001
@@ -1052,7 +1067,7 @@ V_samples$draws(format = "df") %>%
   mcmc_rank_overlay()
 # chains look fine
 
-# 4.4.5 Prior-posterior comparison ####
+# 4.5.5 Prior-posterior comparison ####
 # sample priors
 V_prior <- prior_samples(
   model = V_mod,
@@ -1077,7 +1092,7 @@ V_prior %>%
     theme(panel.grid = element_blank())
 # posteriors are very well constrained
 
-# 4.4.6 Add volume to estimates ####
+# 4.5.6 Add volume to estimates ####
 DIC_TA %<>%
   left_join( # match exact volumes
     V, by = c("ID", "Species", "Treatment")
@@ -1092,37 +1107,39 @@ DIC_TA %<>%
   mutate(Volume = coalesce(Volume, V_mu)) %>%
   select(-V_mu)
 
-# 4.4.7 Convert volume to L ####
+# 4.5.7 Convert volume to L ####
 # The function seacarb::rho() needs temperature and salinity. The temperature measurement
 # needs to be taken wen the water is weighed so I cannot use the titration temperature. The
 # best source of this temperature is that measured by the oxygen meter and can be got from
 # O2_estimates.
-O2_estimates <- read.csv("O2_estimates.csv")
+O2_estimates <- read_rds("O2_estimates.rds")
 
 DIC_TA %<>%
   left_join(
     O2_estimates %>%
-      select(starts_with("."), Round, T_nP, T_R) %>%
-      pivot_longer(cols = c(T_nP, T_R),
+      select(starts_with("."), Round, T_L, T_D) %>%
+      pivot_longer(cols = c(T_L, T_D),
                    values_to = "Temp", 
                    names_to = "Treatment") %>%
-      mutate(Treatment = if_else(Treatment == "T_nP",
+      mutate(Treatment = if_else(Treatment == "T_L",
                                  "Light", "Dark") %>% 
                            fct()) %>%
       distinct(.chain, .iteration, .draw, Round, Treatment, .keep_all = TRUE),
     by = c(".chain", ".iteration", ".draw", "Round", "Treatment")
   ) %>%
-  mutate(Volume_L = Volume / rho(Salinity, Temp)[1])
+  mutate(g_L = rho(S = Salinity, T = Temp) %>% as.numeric(),
+         Volume_L = Volume / g_L)
 
-# 4.4.8 Correct for volume ####
-# Multiplying ΔTA and ΔDIC by Volume_L converts them from µM h^-1 to µmol h^-1 because
+# 4.5.8 Correct for volume ####
+# Multiplying ΔTA h^-1 and ΔDIC h^-1 by Volume_L converts them from µM h^-1 to µmol h^-1 because
 # µM h^-1 is equivalent to µmol L^-1 h^-1, which * L leaves µmol h^-1.
 DIC_TA %<>%
-  mutate(delta_TA_µmol = delta_TA * Volume_L,
-         delta_DIC_µmol = delta_DIC * Volume_L) %>%
-  select(-c(delta_TA, delta_DIC, Volume, Volume_L))
+  mutate(delta_TA_µmol_h = delta_TA_µM_h * Volume_L,
+         delta_DIC_µmol_h = delta_DIC_µM_h * Volume_L) %>%
+  select(-c(delta_TA_µM_h, delta_DIC_µM_h, Volume, Volume_L, 
+            kg_L, g_L, Temp))
 
-# 4.4 Blank correction ####
+# 4.6 Blank correction ####
 DIC_TA %<>% 
   filter(Species != "Blank") %>%
   mutate(Species = Species %>% fct_drop(),
@@ -1130,32 +1147,76 @@ DIC_TA %<>%
   left_join( # join blank and coralline samples horizontally
     DIC_TA %>%
       filter(Species == "Blank") %>%
-      rename(delta_TA_µmol_blank = delta_TA_µmol, delta_DIC_µmol_blank = delta_DIC_µmol) %>%
-      select(starts_with("."), Round, Treatment, delta_TA_µmol_blank, delta_DIC_µmol_blank),
+      rename(delta_TA_µmol_h_blank = delta_TA_µmol_h, delta_DIC_µmol_h_blank = delta_DIC_µmol_h) %>%
+      select(starts_with("."), Round, Treatment, delta_TA_µmol_h_blank, delta_DIC_µmol_h_blank),
     by = c(".chain", ".iteration", ".draw", "Round", "Treatment")
   ) %>%
-  mutate(delta_TA_µmol_corrected = delta_TA_µmol - delta_TA_µmol_blank, # subtract blank
-         delta_DIC_µmol_corrected = delta_DIC_µmol - delta_DIC_µmol_blank) %>%
-  select(-c(delta_TA_µmol, delta_TA_µmol_blank, delta_DIC_µmol, delta_DIC_µmol_blank))
+  mutate(delta_TA_µmol_h_corrected = delta_TA_µmol_h - delta_TA_µmol_h_blank, # subtract blank
+         delta_DIC_µmol_h_corrected = delta_DIC_µmol_h - delta_DIC_µmol_h_blank) %>%
+  select(-c(delta_TA_µmol_h, delta_TA_µmol_h_blank, delta_DIC_µmol_h, delta_DIC_µmol_h_blank))
 
-# 4.5 Mass ####
+# 4.7 Mass ####
+# 4.7.1 Add mass estimates ####
+mass <- read.csv("Mass.csv") %>%
+  select(ID, Species, DM) %>%
+  mutate(ID = ID %>% fct(),
+         Species = Species %>% fct()) %>%
+  rename(Individual = ID,
+         Mass = DM)
 
+DIC_TA %<>%
+  mutate(Individual = ID %>% str_sub(end = -3) %>% fct()) %>% # remove Treatment from ID
+  left_join(mass, by = c("Individual", "Species")) # join mass by short ID
 
+# 4.7.2 Correct for mass ####
+# ΔTA and ΔDIC are currently given as µmol h^-1, but I want it as µmol g^-1 h^-1, so
+# I need to divide by dry mass (g).
+DIC_TA %<>%
+  mutate(delta_TA_µmol_g_h = delta_TA_µmol_h_corrected / Mass,
+         delta_DIC_µmol_g_h = delta_DIC_µmol_h_corrected / Mass,
+         Individual = Individual %>% str_sub(start = 3) %>% fct()) %>% # remove Species from Individual
+  select(-c(delta_TA_µmol_h_corrected, delta_DIC_µmol_h_corrected))
 
+# 4.8 G, P and R ####
+# 4.8.1 Calculate G and CO2 fixation ####
+C_estimates <- DIC_TA %>%
+  mutate(G = -delta_TA_µmol_g_h / 2, # G is inversely related to TA and frees up 2 protons per CaCO3
+         CO2_fix = -delta_DIC_µmol_g_h - G, # some C is fixed by G instead of P and this needs to be subtracted
+         ID = ID %>% str_sub(end = -3) %>% fct()) %>% # remove Treatment from ID
+  select(-c(delta_TA_µmol_g_h, delta_DIC_µmol_g_h)) %>%
+  rename(S = Salinity, S_0 = Salinity_initial, TA = TA_initial, DIC = DIC_initial)
 
+# 4.8.2 Separate G and D and P and R ####
+C_estimates %<>%
+  pivot_wider(names_from = Treatment,
+              values_from = c(G, CO2_fix, TA, DIC, S, S_0)) %>%
+  rename(G = G_Light,
+         G_D = G_Dark,
+         nP = CO2_fix_Light,
+         nP_D = CO2_fix_Dark,
+         TA_L = TA_Light,
+         TA_D = TA_Dark,
+         DIC_L = DIC_Light,
+         DIC_D = DIC_Dark,
+         S_L = S_Light,
+         S_D = S_Dark,
+         S_0_L = S_0_Light,
+         S_0_D = S_0_Dark) %>%
+  mutate(D = -G_D, # dissolution is the inverse of calcification
+         R = -nP_D, # respiration is the inverse of net photosynthesis
+         gP = nP + R, # add net photosynthesis and respiration to get gross photosynthesis
+         # gross calcification cannot be calculated because we cannot assume that dissolution
+         # is equal in dark and light; in fact we know that respiration enhances dissolution
+         TA_LD = (TA_L + TA_D) / 2, # calculate the mean of all confounders that vary between
+         DIC_LD = (DIC_L + DIC_D) / 2, # light and dark incubations
+         S_LD = (S_L + S_D) / 2,
+         S_0_LD = (S_0_L + S_0_D) / 2) %>%
+  select(-c(G_D, nP_D))
 
+str(C_estimates)
 
-# 4.6 Calcification and CO2 fixation ####
-G_P <- DIC_TA %>%
-  select(starts_with("."), ID, Round, Species, Treatment, 
-         delta_TA_corrected, delta_DIC_corrected) %>% # all incubations ran for 2 h, hence division by 2
-  mutate(G_µM_h = -delta_TA_corrected / 2 / 2, # G is inversely related to TA and frees up two protons per CaCO3
-         CO2_µM_h = -delta_DIC_corrected / 2 - G_µM_h) # some C is fixed by G instead of P and needs to be subtracted
+# 4.8.3 Clean up ####
+rm(list = setdiff(ls(), "C_estimates"))
 
-
-
-
-
-
-
-
+# 4.8.4 Save estimates ####
+C_estimates %>% write_rds("C_estimates.rds")

@@ -2583,14 +2583,16 @@ O2_sample_estimates %<>%
   mutate(Volume = coalesce(Volume, V_mu)) %>%
   select(-V_mu) %>% # merge Volume into one column
   # seacarb::rho calculates seawater density (g/L), so if we divide g by rho we get L
-  mutate(Volume_L = Volume / rho(Salinity_end, T_mu)[1]) 
+  mutate(g_L = rho(S = Salinity_end, T = T_mu) %>% as.numeric(),
+         Volume_L = Volume / g_L)
   
 str(O2_sample_estimates)
 
 O2_blank_estimates %<>%
   mutate(Volume = coalesce(Volume, V_mu)) %>%
   select(-V_mu) %>%
-  mutate(Volume_L = Volume / rho(Salinity_end, T_mu)[1]) 
+  mutate(g_L = rho(S = Salinity_end, T = T_mu) %>% as.numeric(),
+         Volume_L = Volume / g_L)
 
 str(O2_blank_estimates)
 
@@ -2607,10 +2609,10 @@ O2_blank_estimates %<>%
 # 4.3.1 Combine estimates ####
 O2_estimates <- 
   O2_sample_estimates %>%
-  select(-c(beta, Volume, Salinity_end, Volume_L)) %>%
+  select(-c(beta, Volume, Salinity_end, g_L, Volume_L)) %>%
   left_join(
     O2_blank_estimates %>%
-      select(-c(Species, beta, Volume, Salinity_end, Volume_L)) %>%
+      select(-c(Species, beta, Volume, Salinity_end, g_L, Volume_L)) %>%
       rename(beta_µmol_min_blank = beta_µmol_min,
              ID_blank = ID),
     by = c(".chain", ".iteration", ".draw", "Round", 
@@ -2629,11 +2631,7 @@ O2_estimates %>%
 
 # 4.3.3 Subtract blank slope ####
 O2_estimates %<>%
-  mutate(beta_µmol_min_corrected = if_else( # I accidentally modelled dark blanks with a positive slope
-    Treatment == "Light", # so this if_else statement is necessary, I have already corrected for the second run
-    beta_µmol_min - beta_µmol_min_blank,
-    beta_µmol_min + beta_µmol_min_blank
-  ))
+  mutate(beta_µmol_min_corrected = beta_µmol_min - beta_µmol_min_blank)
 
 # 4.4 Mass ####
 # 4.4.1 Add mass estimates ####
@@ -2653,56 +2651,52 @@ O2_estimates %<>%
 # I need to divide by dry mass (g) and multiply by 60 min h^-1.
 O2_estimates %<>%
   mutate(beta_µmol_g_h = beta_µmol_min_corrected / Mass * 60)
-  
+
 # 4.5 Photosynthesis and respiration ####
-# 4.5.1 Pivot data and calculate gross photosynthesis ####
+# 4.5.1 Check data ####
+O2_estimates %>%
+  group_by(Round, ID, Species, Treatment) %>%
+  summarise(beta_µmol_g_h_mean = mean(beta_µmol_g_h),
+            beta_µmol_g_h_sd = sd(beta_µmol_g_h),
+            O2_0_mean = mean(O2_0),
+            O2_0_sd = sd(O2_0),
+            T_mu_mean = mean(T_mu),
+            T_mu_sd = sd(T_mu),
+            Pressure = unique(Pressure),
+            Salinity = unique(Salinity),
+            n = length(beta_µmol_g_h)) %>%
+  print(n = 96)
+
+# 4.5.2 Pivot data and calculate gross photosynthesis ####
 O2_estimates %<>%
-  mutate(Round = Round %>% str_sub(end = -3) %>% fct(), # remove Treatment from Round
+  mutate(ID = ID %>% str_sub(end = -3) %>% fct(), # remove Treatment from ID
+         Round = Round %>% str_sub(end = -3) %>% fct(), # remove Treatment from Round
          Individual = Individual %>% str_sub(start = 3) %>% fct()) %>% # remove Species from Individual
   select(-c(beta_µmol_min, beta_µmol_min_blank, 
-            beta_µmol_min_corrected, ID, ID_blank)) %>%
+            beta_µmol_min_corrected, ID_blank)) %>%
   pivot_wider(names_from = Treatment, 
               values_from = c(beta_µmol_g_h, O2_0, T_mu,
                               Pressure, Salinity)) %>%
   rename(nP = beta_µmol_g_h_Light,
          R = beta_µmol_g_h_Dark,
-         O2_nP = O2_0_Light,
-         O2_R = O2_0_Dark,
-         T_nP = T_mu_Light,
-         T_R = T_mu_Dark,
-         P_nP = Pressure_Light,
-         P_R = Pressure_Dark,
-         S_nP = Salinity_Light,
-         S_R = Salinity_Dark) %>%
+         O2_L = O2_0_Light,
+         O2_D = O2_0_Dark,
+         T_L = T_mu_Light,
+         T_D = T_mu_Dark,
+         P_L = Pressure_Light,
+         P_D = Pressure_Dark,
+         S_L = Salinity_Light,
+         S_D = Salinity_Dark) %>%
   mutate(gP = nP + R, # add net photosynthesis and respiration to get gross photosynthesis
-         O2_gP = (O2_nP + O2_R) / 2, # calculate the mean of all confounders that vary between
-         T_gP = (T_nP + T_R) / 2, # light and dark incubations
-         P_gP = (P_nP + P_R) / 2,
-         S_gP = (S_nP + S_R) / 2)
+         O2_LD = (O2_L + O2_D) / 2, # calculate the mean of all confounders that vary between
+         T_LD = (T_L + T_D) / 2, # light and dark incubations
+         P_LD = (P_L + P_D) / 2,
+         S_LD = (S_L + S_D) / 2)
 
 str(O2_estimates)
 
-# 4.5.2 Summarise estimates ####
-O2_estimates_summary <- O2_estimates %>%
-  group_by(Date, Round, Species, Individual) %>%
-  summarise(
-    across(
-      .cols = c(Mass, nP, R, gP, O2_nP, O2_R, O2_gP, T_nP, T_R, T_gP,
-                P_nP, P_R, P_gP, S_nP, S_R, S_gP),
-      .fns = list(mean = mean, sd = sd)
-      )
-    ) %>%
-  ungroup() %>%
-  keep(~ !all(.x == 0))
-  
-str(O2_estimates_summary) 
-  
 # 4.5.3 Clean up ####
-rm(list = setdiff(ls(), c("O2_estimates", "O2_estimates_summary")))
+rm(list = setdiff(ls(), "O2_estimates"))
 
 # 4.5.4 Save estimates ####
-O2_estimates_summary %>%
-  write.csv("O2_estimates_summary.csv")
-
-O2_estimates %>%
-  write.csv("O2_estimates.csv")
+O2_estimates %>% write_rds("O2_estimates.rds")
