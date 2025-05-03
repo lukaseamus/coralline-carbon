@@ -8,9 +8,10 @@ mass <- read.csv("Mass.csv") %>%
   mutate(ID = ID %>% fct(),
          Species = Species %>% fct(),
          Individual = Individual %>% fct(),
+         # subtract empty tube mass from tube with organics
          POM = POM_Tube - Tube,
          # dry mass lost during acidification must be CaCO3
-         CaCO3 = DMi - POM,
+         CaCO3 = DMi - POM, # 2HCl + CaCO3 -> CO2 (gas) + CaCl2 (washed out)
          # g C = g CaCO3 / g mol^-1 CaCO3 * g mol^-1 C
          PIC = CaCO3 / 100.0869 * 12.0107,
          POC = POM * 0.3, # assuming 30% carbon content
@@ -70,8 +71,9 @@ Fig_6 <- # data cannot be specified here because geom_textvline acts up
     geom_hline(yintercept = 0) +
     geom_textvline(xintercept = 1, label = "1:1", family = "Futura", 
                    size = 3.5, hjust = 1) +
-    geom_violin(data = C_estimates, aes(PIC_POC, G_P, fill = Species, colour = Species, group = ID),
-                alpha = 0.5, position = "identity", width = 1.5) +
+    geom_violin(data = C_estimates %>% drop_na(PIC_POC, G_P), 
+                aes(PIC_POC, G_P, fill = Species, colour = Species, group = ID),
+                alpha = 0.5, position = "identity", width = 1.2) +
     scale_fill_manual(values = c("#ec7faa", "#f5a54a", "#6b4d8d")) +
     scale_colour_manual(values = c("#ec7faa", "#f5a54a", "#6b4d8d")) +
     scale_y_continuous(breaks = seq(-0.5, 1, 0.5),
@@ -88,80 +90,43 @@ Fig_6 %>%
   ggsave(filename = "Fig_6.pdf", path = "Figures",
          width = 22, height = 10, unit = "cm", device = cairo_pdf)
 
-###################
+# 3. PIC:POC ####
+# 3.1 Prepare data ####
+# The first model will just look at PIC:POC. There was no good spread in mass because
+# the acidification volume was limited to 20 mL, so we stuck with ~1 g dry mass. That
+# means a regression would not yield a good estimate. Instead, I will run an intercept
+# model on the ratio. The data need no further preparation.
 
-# 3.2 Prepare data ####
-# The model needs to be conditioned on a data summary and standard deviations
-# are passed to it to account for measurement error.
-CDR_data <- O2_C_estimates %>%
-  group_by(ID, Species) %>%
-  summarise(
-    across(
-      .cols = c(CDR_naive, CDR_true),
-      .fns = list(mean = mean, sd = sd)
-    )
-  ) %>%
-  ungroup() %>%
-  select(-ID)
+# 3.2 Prior simulation ####
+# Since PIC:POC is a ratio it has to be positive (gamma likelihood). Data from Haberman & Martone 
+# (2023, doi: 10.3354/meps14341) for four corallines suggest a mean PIC:POC of 1.993545, or simply 2.
 
-# 3.3 Prior simulation ####
-# In the regression of true on naive CO2 fixation, an intercept is imaginable since
-# dissolution may ameliorate the CO2 efflux caused by respiration, for example
-# causing true CDR to be positive when naive CDR is zero.
-
-# The slope is the ratio of true CDR to naive CDR, which represents the proportion of 
-# naive CDR that is actually removed and as a proportion has to be positive and smaller than 1
-# (1:1 relationship is impossible given that PQ is factored in and G is subtracted).
-# The beta distribution is ideal for proportions but is hard to use as a hierarchical prior.
-# The normal distribution truncated to the 0-1 space will do the job.
-
-
-require(truncnorm) # simulate from the truncated normal
-tibble(n = 1:1e3, # simulate hierachical prior
-       p_mu = rtruncnorm( 1e3 , mean = 0.5 , sd = 0.2 , a = 0 , b = 1 ), # a is lower bound, b is upper bound
-       p_sigma = rexp( 1e3 , 1 ),
-       p = rtruncnorm( 1e3 , mean = p_mu , sd = p_sigma , a = 0 , b = 1 )) %>%
-  expand_grid(CDR_naive = CDR_data %$% seq(min(CDR_naive_mean), max(CDR_naive_mean))) %>%
-  mutate(CDR_true = p * CDR_naive) %>%
-  ggplot(aes(CDR_naive, CDR_true, group = n)) +
-    geom_abline(slope = 1) +
-    geom_hline(yintercept = CDR_data %$% c(min(CDR_true_mean), 0, max(CDR_true_mean))) +
-    geom_line(alpha = 0.05) +
+# simulate hyperprior
+tibble(PICPOC_mu_log = rnorm( 1e5 , mean = log(2) , sd = 0.8 ), 
+       PICPOC_mu = PICPOC_mu_log %>% exp()) %>%
+  ggplot(aes(PICPOC_mu)) +
+    geom_vline(xintercept = mass %$% c(min(PIC_POC), max(PIC_POC))) +
+    geom_density() +
     theme_minimal() +
     theme(panel.grid = element_blank())
 # Looks reasonable.
 
-# I also need a prior for estimates of the true predictor
-CDR_data %$% max(CDR_naive_mean) %>% round / 2 # I'll take half the predictor range
-ggplot() + # and choose a reasonable prior centred on it
-  geom_density(aes(rnorm(n = 1e5, mean = 860, sd = 400))) +
-  geom_vline(xintercept = CDR_data %$% c(min(CDR_naive_mean), max(CDR_naive_mean))) +
-  theme_minimal() +
-  theme(panel.grid = element_blank())
-
-# 3.4 Run model ####
-CDR_stan <- "
+# 3.3 Run model ####
+PICPOC_stan <- "
 data{
   int n;
-  vector[n] CDR_naive_mean;
-  vector<lower=0>[n] CDR_naive_sd;
-  vector[n] CDR_true_mean;
-  vector<lower=0>[n] CDR_true_sd;
+  vector[n] PIC_POC;
   array[n] int Species;
   int n_Species;
 }
 
 parameters{
-  // True estimates for measurement error
-  vector[n] CDR_naive;
-  vector[n] CDR_true;
-
   // Hyperparameters
-  real<lower=0, upper=1> p_mu;
-  real<lower=0> p_sigma;
+  real PICPOC_mu;
+  real<lower=0> PICPOC_sigma;
   
   // Species-specific parameters
-  vector<lower=0, upper=1>[n_Species] p;
+  vector[n_Species] PICPOC;
   
   // Likelihood uncertainty
   real<lower=0> sigma;
@@ -169,49 +134,46 @@ parameters{
 
 model{
   // Hyperpriors
-  p_mu ~ normal( 0.5 , 0.2 ) T[0,1];
-  p_sigma ~ exponential( 1 );
+  PICPOC_mu ~ normal( log(2) , 0.8 );
+  PICPOC_sigma ~ exponential( 1 );
   
   // Species-specific priors
-  p ~ normal( p_mu , p_sigma ) T[0,1];
+  PICPOC ~ normal( PICPOC_mu , PICPOC_sigma );
   
   // Likelihood uncertainty prior
   sigma ~ exponential( 1 );
   
-  // Estimated predictor
-  CDR_naive ~ normal( 860 , 400 );
-  CDR_naive_mean ~ normal( CDR_naive , CDR_naive_sd );
-  
   // Model
   vector[n] mu;
   for ( i in 1:n ) {
-      mu[i] = p[Species[i]] * CDR_naive[i];
+      mu[i] = exp( PICPOC[Species[i]] );
   }
 
-  // Likelihood with measurement error
-  CDR_true ~ normal( mu , sigma );
-  CDR_true_mean ~ normal( CDR_true , CDR_true_sd );
+  // Likelihood reparameterised with mean and sd
+  PIC_POC ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
 }
 "
 
 require(cmdstanr)
-CDR_mod <- CDR_stan %>%
+PICPOC_mod <- PICPOC_stan %>%
   write_stan_file() %>%
   cmdstan_model()
 
 require(tidybayes)
-CDR_samples <- CDR_mod$sample(
-  data = CDR_data %>% compose_data(),
+PICPOC_samples <- PICPOC_mod$sample(
+  data = mass %>% 
+    select(Species, PIC_POC) %>%
+    compose_data(),
   chains = 8,
   parallel_chains = parallel::detectCores(),
   iter_warmup = 1e4,
   iter_sampling = 1e4,
-  adapt_delta = 0.999,
+  adapt_delta = 0.99,
   max_treedepth = 15) 
 # increased adapt_delta and max_treedepth to make sampler go slower and reduce divergences
 
-# 3.5 Model checks ####
-CDR_samples$summary() %>%
+# 3.4 Model checks ####
+PICPOC_samples$summary() %>%
   mutate(rhat_check = rhat > 1.001) %>%
   summarise(rhat_1.001 = sum(rhat_check) / length(rhat), # proportion > 1.001
             rhat_mean = mean(rhat),
@@ -222,50 +184,226 @@ CDR_samples$summary() %>%
 # good effective sample size
 
 require(bayesplot)
-CDR_samples$draws(format = "df") %>%
-  mcmc_rank_overlay() %>%
-  ggsave(filename = "CDR_rank.pdf", path = "Plots",
-         width = 80, height = 40, unit = "cm", device = cairo_pdf)
+PICPOC_samples$draws(format = "df") %>%
+  mcmc_rank_overlay()
 # chains look good
 
-# 3.6 Prior-posterior comparison ####
+# 3.5 Prior-posterior comparison ####
 source("functions.R")
 # sample priors
-CDR_prior <- prior_samples(
-  model = CDR_mod,
-  data = CDR_data %>% compose_data(),
+PICPOC_prior <- prior_samples(
+  model = PICPOC_mod,
+  data = mass %>% 
+    select(Species, PIC_POC) %>%
+    compose_data(),
   chains = 8, samples = 1e4)
 # Stan struggles to sample joint prior distributions of hierarchical models,
 # but it's good enough for a quick prior-posterior check.
 
 # plot prior-posterior comparison for main parameters
-CDR_prior %>%
-  prior_posterior_draws(posterior_samples = CDR_samples,
-                        group = CDR_data %>% select(Species),
-                        parameters = c("p[Species]", "p_mu", "p_sigma", 
+PICPOC_prior %>%
+  prior_posterior_draws(posterior_samples = PICPOC_samples,
+                        group = mass %>% select(Species),
+                        parameters = c("PICPOC[Species]", "PICPOC_mu", "PICPOC_sigma", 
                                        "sigma"),
                         format = "long") %>%
   prior_posterior_plot(group_name = "Species", ridges = FALSE)
 # posteriors are reasonably well constrained
 
-# check prior-posterior of estimates of true predictor
-ggsave(
-  CDR_samples %>%
-    spread_draws(CDR_naive[n]) %>%
-    mutate(CDR_naive_prior = rnorm(max(.draw), 860 , 400)) %>%
-    pivot_longer(cols = c(CDR_naive, CDR_naive_prior),
-                 values_to = "CDR_naive", names_to = "distribution") %>%
-    mutate(distribution = if_else(distribution %>% str_detect("prior"),
-                                  "prior", "posterior") %>% fct()) %>%
-    ggplot() +
-      geom_density(aes(CDR_naive, alpha = distribution),
-                   fill = "black", colour = NA) +
-      scale_alpha_manual(values = c(0.6, 0.2)) +
-      facet_wrap(~ n, scales = "free") +
-      theme_minimal() +
-      theme(panel.grid = element_blank()),
-  filename = "CDR_prior_posterior.pdf", path = "Plots",
-  width = 80, height = 40, unit = "cm", device = cairo_pdf)
+# 3.6 Predictions ####
+# Simulate smooth prior distributions using R
+PICPOC_prior <- tibble(
+  PICPOC_mu = rnorm( 8 * 1e4 , mean = log(2) , sd = 0.8 ), 
+  PICPOC_sigma = rexp( 8 * 1e4 , rate = 1 ),
+  PICPOC = rnorm( 8 * 1e4 , mean = PICPOC_mu , sd = PICPOC_sigma ),
+  sigma = rexp( 8 * 1e4 , 1 )
+)
+
+PICPOC_prior %>%
+  ggplot() +
+    geom_density(aes(PICPOC_mu), colour = "black") +
+    geom_density(aes(PICPOC), colour = "grey") +
+    scale_x_continuous(limits = c(-2.5, 4), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+
+# Simulate smooth posteriors with hyperparameters
+PICPOC_hyperposterior <- PICPOC_samples %>%
+  spread_draws(PICPOC_mu, PICPOC_sigma, sigma) %>% # simulate for unobserved corallines
+  mutate(PICPOC = rnorm( n() , mean = PICPOC_mu , sd = PICPOC_sigma )) 
+
+PICPOC_hyperposterior %>%
+  ggplot() +
+    geom_density(aes(PICPOC_mu), colour = "black") +
+    geom_density(aes(PICPOC), colour = "grey") +
+    scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+
+# Join priors and posteriors
+PICPOC_prior_posterior <- PICPOC_samples %>%
+  recover_types(mass %>% select(Species)) %>%
+  spread_draws(PICPOC[Species], sigma) %>%
+  ungroup() %>%
+  bind_rows(
+    PICPOC_hyperposterior %>% 
+      mutate(Species = "Branching corallines" %>% fct()) %>%
+      select(-c(PICPOC_mu, PICPOC_sigma)),
+    PICPOC_prior %>%
+      mutate(.chain = 1:8 %>% rep(each = 1e4),
+             .iteration = 1:1e4 %>% rep(8),
+             .draw = 1:(8*1e4),
+             Species = "Prior" %>% fct()) %>%
+      select(-c(PICPOC_mu, PICPOC_sigma))
+  ) %>%
+  mutate(mu = exp( PICPOC ),
+         obs = rgamma( n(), mu^2 / sigma^2 , mu / sigma^2 ))
+
+str(PICPOC_prior_posterior)
+
+# 4. Ratio comparison ####
+# 4.1 Prepare data ####
+# The model needs to be conditioned on a data summary and standard deviations
+# are passed to it to account for measurement error. In the regression of metabolic 
+# on mass ratio, a traditional intercept (x = 0) is meaningless since ratios can never 
+# be zero. It is best to centre the data so that the intercept becomes an estimate of 
+# the metabolic ratio at the mean mass ratio, we know to be roughly 0.3 from previous 
+# models (see Calcification.R). 
+R_data <- C_estimates %>%
+  drop_na(PIC_POC, G_P) %>%
+  group_by(ID, Species) %>%
+  summarise(PIC_POC = unique(PIC_POC),
+            G_P_mean = mean(G_P),
+            G_P_sd = sd(G_P)) %>%
+  ungroup() %>%
+  mutate(PIC_POC_c = PIC_POC - mean(PIC_POC)) %>%
+  select(-c(ID, PIC_POC))
+
+R_data
+
+# 4.2 Prior simulation ####
+# The slope is the relationship ratios, which is widely expected to be 1:1, but which
+# can plausibly take negative values and is in reality completely unknown.
+tibble(n = 1:1e3, # simulate hyperpriors
+       alpha_mu = rnorm( 1e3 , mean = 0.3 , sd = 0.15 ),
+       beta_mu = rnorm( 1e3 , mean = 0 , sd = 0.01 )) %>%
+  expand_grid(PIC_POC_c = R_data %$% seq(min(PIC_POC_c), max(PIC_POC_c))) %>%
+  mutate(G_P = alpha_mu + beta_mu * PIC_POC_c) %>%
+  ggplot(aes(PIC_POC_c, G_P, group = n)) +
+    geom_hline(yintercept = R_data %$% c(min(G_P_mean), 0, max(G_P_mean))) +
+    geom_line(alpha = 0.05) +
+    coord_cartesian(ylim = c(-0.5, 1)) +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+# Looks reasonable.
+
+# 4.3 Run model ####
+R_stan <- "
+data{
+  int n;
+  vector[n] PIC_POC_c;
+  vector[n] G_P_mean;
+  vector<lower=0>[n] G_P_sd;
+  array[n] int Species;
+  int n_Species;
+}
+
+parameters{
+  // True estimates for measurement error
+  vector[n] G_P;
+
+  // Hyperparameters
+  real alpha_mu;
+  real<lower=0> alpha_sigma;
+  real beta_mu;
+  real<lower=0> beta_sigma;
+  
+  // Species-specific parameters
+  vector[n_Species] alpha;
+  vector[n_Species] beta;
+  
+  // Likelihood uncertainty
+  real<lower=0> sigma;
+}
+
+model{
+  // Hyperpriors
+  alpha_mu ~ normal( 0.3 , 0.15 );
+  alpha_sigma ~ exponential( 10 );
+  beta_mu ~ normal( 0 , 0.02 );
+  beta_sigma ~ exponential( 20 );
+  
+  // Species-specific priors
+  alpha ~ normal( alpha_mu , alpha_sigma );
+  beta ~ normal( beta_mu , beta_sigma );
+  
+  // Likelihood uncertainty prior
+  sigma ~ exponential( 1 );
+  
+  // Model
+  vector[n] mu;
+  for ( i in 1:n ) {
+      mu[i] = alpha[Species[i]] + beta[Species[i]] * PIC_POC_c[i];
+  }
+
+  // Likelihood with measurement error
+  G_P ~ normal( mu , sigma );
+  G_P_mean ~ normal( G_P , G_P_sd );
+}
+"
+
+R_mod <- R_stan %>%
+  write_stan_file() %>%
+  cmdstan_model()
+
+R_samples <- R_mod$sample(
+  data = R_data %>% compose_data(),
+  chains = 8,
+  parallel_chains = parallel::detectCores(),
+  iter_warmup = 1e4,
+  iter_sampling = 1e4,
+  adapt_delta = 0.999,
+  max_treedepth = 12) 
+# increased adapt_delta and max_treedepth to make sampler go slower and reduce divergences
+
+# 4.4 Model checks ####
+R_samples$summary() %>%
+  mutate(rhat_check = rhat > 1.001) %>%
+  summarise(rhat_1.001 = sum(rhat_check) / length(rhat), # proportion > 1.001
+            rhat_mean = mean(rhat),
+            rhat_sd = sd(rhat),
+            ess_mean = mean(ess_bulk),
+            ess_sd = sd(ess_bulk))
+# <1% rhat above 1.001
+# good effective sample size
+
+R_samples$draws(format = "df") %>%
+  mcmc_rank_overlay() %>%
+  ggsave(filename = "R_rank.pdf", path = "Plots",
+         width = 80, height = 40, unit = "cm", device = cairo_pdf)
+# chains look good
+
+# 4.5 Prior-posterior comparison ####
+# sample priors
+R_prior <- prior_samples(
+  model = R_mod,
+  data = R_data %>% compose_data(),
+  chains = 8, samples = 1e4)
+# Stan struggles to sample joint prior distributions of hierarchical models,
+# but it's good enough for a quick prior-posterior check.
+
+# plot prior-posterior comparison for main parameters
+R_prior %>%
+  prior_posterior_draws(posterior_samples = R_samples,
+                        group = R_data %>% select(Species),
+                        parameters = c("alpha[Species]", "alpha_mu", "alpha_sigma", 
+                                       "beta[Species]", "beta_mu", "beta_sigma", 
+                                       "sigma"),
+                        format = "long") %>%
+  prior_posterior_plot(group_name = "Species", ridges = FALSE)
+# posteriors are reasonably well constrained
+
+########################
 
 # 3.7 Predictions ####
 # Simulate smooth prior distributions using R
