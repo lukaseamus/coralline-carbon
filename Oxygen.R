@@ -5,7 +5,7 @@ require(here)
 files <- here("Oxygen") %>% list.files(pattern = "\\.csv$", full.names = TRUE)
 
 O2 <- files %>%
-  map(~ read.csv(.x, skip = 1, header = TRUE) %>%
+  map(~ .x %>% read.csv(skip = 1, header = TRUE) %>%
         drop_na(Value) %>%
         mutate(delta_t = delta_t %>% as.numeric(),
                delta_t_c = delta_t - mean(delta_t), # centre time for linear models
@@ -995,7 +995,7 @@ Fig_S1a <-
       geom_line(data = . %>% filter(distribution == "posterior"),
                 aes(delta_t, mu_y, colour = Function),
                 linewidth = 0.2) +
-      geom_ribbon(data = . %>% filter(distribution == "posterior"), 
+      geom_ribbon(data = . %>% filter(distribution == "posterior"),
                   aes(delta_t, ymin = mu_ymin, ymax = mu_ymax,
                   alpha = factor(mu_.width), fill = Function)) +
       scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
