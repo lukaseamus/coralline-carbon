@@ -80,7 +80,7 @@ Fig_6 <- # data cannot be specified here because geom_textvline acts up
                        labels = scales::label_number(accuracy = c(0.1, 1, 0.1, 1),
                                                      style_negative = "minus")) +
     labs(x = "PIC:POC",
-         y = expression("G:P"["n"])) +
+         y = expression("G:P"["n"]*" (µmol CaCO"[3]*" µmol"^-1*" CO"[2]*")")) +
     coord_cartesian(xlim = c(0, 40), ylim = c(-0.5, 1),
                     expand = FALSE) +
     mytheme +
@@ -101,11 +101,11 @@ Fig_6 %>%
 # Since PIC:POC is a ratio it has to be positive (gamma likelihood). Data from Haberman & Martone 
 # (2023, doi: 10.3354/meps14341) for four corallines suggest a mean PIC:POC of 1.993545, or simply 2.
 
-# simulate hyperprior
-tibble(PICPOC_mu_log = rnorm( 1e5 , mean = log(2) , sd = 0.8 ), 
-       PICPOC_mu = PICPOC_mu_log %>% exp()) %>%
+# simulate prior
+tibble(PICPOC_mu_log = rnorm( 1e5 , mean = log(2) , sd = 0.8 ),
+       PICPOC_mu = exp(PICPOC_mu_log)) %>%
   ggplot(aes(PICPOC_mu)) +
-    geom_vline(xintercept = mass %$% c(min(PIC_POC), max(PIC_POC))) +
+    geom_vline(xintercept = mass %$% PIC_POC, alpha = 0.05) +
     geom_density() +
     theme_minimal() +
     theme(panel.grid = element_blank())
@@ -124,10 +124,10 @@ parameters{
   // Hyperparameters
   real PICPOC_mu;
   real<lower=0> PICPOC_sigma;
-  
+
   // Species-specific parameters
-  vector[n_Species] PICPOC;
-  
+  vector[n_Species] PICPOC_z;
+
   // Likelihood uncertainty
   real<lower=0> sigma;
 }
@@ -136,13 +136,17 @@ model{
   // Hyperpriors
   PICPOC_mu ~ normal( log(2) , 0.8 );
   PICPOC_sigma ~ exponential( 1 );
-  
-  // Species-specific priors
-  PICPOC ~ normal( PICPOC_mu , PICPOC_sigma );
-  
+
+  // Species-specific z-score priors
+  PICPOC_z ~ normal( 0 , 1 );
+
+  // Calculate PICPOC
+  vector[n_Species] PICPOC;
+  PICPOC = PICPOC_z * PICPOC_sigma + PICPOC_mu;
+
   // Likelihood uncertainty prior
   sigma ~ exponential( 1 );
-  
+
   // Model
   vector[n] mu;
   for ( i in 1:n ) {
@@ -151,6 +155,12 @@ model{
 
   // Likelihood reparameterised with mean and sd
   PIC_POC ~ gamma( square(mu) / square(sigma) , mu / square(sigma) );
+}
+
+generated quantities{
+  // Save PICPOC
+  vector[n_Species] PICPOC;
+  PICPOC = PICPOC_z * PICPOC_sigma + PICPOC_mu;
 }
 "
 
@@ -161,16 +171,14 @@ PICPOC_mod <- PICPOC_stan %>%
 
 require(tidybayes)
 PICPOC_samples <- PICPOC_mod$sample(
-  data = mass %>% 
+  data = mass %>%
     select(Species, PIC_POC) %>%
     compose_data(),
   chains = 8,
   parallel_chains = parallel::detectCores(),
   iter_warmup = 1e4,
   iter_sampling = 1e4,
-  adapt_delta = 0.99,
-  max_treedepth = 15) 
-# increased adapt_delta and max_treedepth to make sampler go slower and reduce divergences
+  adapt_delta = 0.99)
 
 # 3.4 Model checks ####
 PICPOC_samples$summary() %>%
@@ -193,73 +201,20 @@ source("functions.R")
 # sample priors
 PICPOC_prior <- prior_samples(
   model = PICPOC_mod,
-  data = mass %>% 
+  data = mass %>%
     select(Species, PIC_POC) %>%
     compose_data(),
   chains = 8, samples = 1e4)
-# Stan struggles to sample joint prior distributions of hierarchical models,
-# but it's good enough for a quick prior-posterior check.
 
 # plot prior-posterior comparison for main parameters
 PICPOC_prior %>%
   prior_posterior_draws(posterior_samples = PICPOC_samples,
                         group = mass %>% select(Species),
-                        parameters = c("PICPOC[Species]", "PICPOC_mu", "PICPOC_sigma", 
-                                       "sigma"),
+                        parameters = c("PICPOC[Species]", "PICPOC_mu",
+                                       "PICPOC_sigma", "sigma"),
                         format = "long") %>%
   prior_posterior_plot(group_name = "Species", ridges = FALSE)
-# posteriors are reasonably well constrained
-
-# 3.6 Predictions ####
-# Simulate smooth prior distributions using R
-PICPOC_prior <- tibble(
-  PICPOC_mu = rnorm( 8 * 1e4 , mean = log(2) , sd = 0.8 ), 
-  PICPOC_sigma = rexp( 8 * 1e4 , rate = 1 ),
-  PICPOC = rnorm( 8 * 1e4 , mean = PICPOC_mu , sd = PICPOC_sigma ),
-  sigma = rexp( 8 * 1e4 , 1 )
-)
-
-PICPOC_prior %>%
-  ggplot() +
-    geom_density(aes(PICPOC_mu), colour = "black") +
-    geom_density(aes(PICPOC), colour = "grey") +
-    scale_x_continuous(limits = c(-2.5, 4), oob = scales::oob_keep) +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
-
-# Simulate smooth posteriors with hyperparameters
-PICPOC_hyperposterior <- PICPOC_samples %>%
-  spread_draws(PICPOC_mu, PICPOC_sigma, sigma) %>% # simulate for unobserved corallines
-  mutate(PICPOC = rnorm( n() , mean = PICPOC_mu , sd = PICPOC_sigma )) 
-
-PICPOC_hyperposterior %>%
-  ggplot() +
-    geom_density(aes(PICPOC_mu), colour = "black") +
-    geom_density(aes(PICPOC), colour = "grey") +
-    scale_x_continuous(limits = c(0, 3), oob = scales::oob_keep) +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
-
-# Join priors and posteriors
-PICPOC_prior_posterior <- PICPOC_samples %>%
-  recover_types(mass %>% select(Species)) %>%
-  spread_draws(PICPOC[Species], sigma) %>%
-  ungroup() %>%
-  bind_rows(
-    PICPOC_hyperposterior %>% 
-      mutate(Species = "Branching corallines" %>% fct()) %>%
-      select(-c(PICPOC_mu, PICPOC_sigma)),
-    PICPOC_prior %>%
-      mutate(.chain = 1:8 %>% rep(each = 1e4),
-             .iteration = 1:1e4 %>% rep(8),
-             .draw = 1:(8*1e4),
-             Species = "Prior" %>% fct()) %>%
-      select(-c(PICPOC_mu, PICPOC_sigma))
-  ) %>%
-  mutate(mu = exp( PICPOC ),
-         obs = rgamma( n(), mu^2 / sigma^2 , mu / sigma^2 ))
-
-str(PICPOC_prior_posterior)
+# posteriors are well constrained
 
 # 4. Ratio comparison ####
 # 4.1 Prepare data ####
@@ -277,7 +232,7 @@ R_data <- C_estimates %>%
             G_P_sd = sd(G_P)) %>%
   ungroup() %>%
   mutate(PIC_POC_c = PIC_POC - mean(PIC_POC)) %>%
-  select(-c(ID, PIC_POC))
+  select(-ID)
 
 R_data
 
@@ -313,14 +268,14 @@ parameters{
   vector[n] G_P;
 
   // Hyperparameters
-  real alpha_mu;
-  real<lower=0> alpha_sigma;
+  real GPmu_mu;
+  real<lower=0> GPmu_sigma;
   real beta_mu;
   real<lower=0> beta_sigma;
   
   // Species-specific parameters
-  vector[n_Species] alpha;
-  vector[n_Species] beta;
+  vector[n_Species] GPmu_z;
+  vector[n_Species] beta_z;
   
   // Likelihood uncertainty
   real<lower=0> sigma;
@@ -328,14 +283,20 @@ parameters{
 
 model{
   // Hyperpriors
-  alpha_mu ~ normal( 0.3 , 0.15 );
-  alpha_sigma ~ exponential( 10 );
-  beta_mu ~ normal( 0 , 0.02 );
-  beta_sigma ~ exponential( 20 );
+  GPmu_mu ~ normal( 0.3 , 0.15 );
+  GPmu_sigma ~ exponential( 10 );
+  beta_mu ~ normal( 0 , 0.01 );
+  beta_sigma ~ exponential( 30 );
   
-  // Species-specific priors
-  alpha ~ normal( alpha_mu , alpha_sigma );
-  beta ~ normal( beta_mu , beta_sigma );
+  // Species-specific z-score priors
+  GPmu_z ~ normal( 0 , 1 );
+  beta_z ~ normal( 0 , 1 );
+  
+  // Calculate GPmu and beta
+  vector[n_Species] GPmu;
+  GPmu = GPmu_z * GPmu_sigma + GPmu_mu;
+  vector[n_Species] beta;
+  beta = beta_z * beta_sigma + beta_mu;
   
   // Likelihood uncertainty prior
   sigma ~ exponential( 1 );
@@ -343,12 +304,20 @@ model{
   // Model
   vector[n] mu;
   for ( i in 1:n ) {
-      mu[i] = alpha[Species[i]] + beta[Species[i]] * PIC_POC_c[i];
+      mu[i] = GPmu[Species[i]] + beta[Species[i]] * PIC_POC_c[i];
   }
 
   // Likelihood with measurement error
   G_P ~ normal( mu , sigma );
   G_P_mean ~ normal( G_P , G_P_sd );
+}
+
+generated quantities{
+  // Save GPmu and beta
+  vector[n_Species] GPmu;
+  GPmu = GPmu_z * GPmu_sigma + GPmu_mu;
+  vector[n_Species] beta;
+  beta = beta_z * beta_sigma + beta_mu;
 }
 "
 
@@ -362,9 +331,8 @@ R_samples <- R_mod$sample(
   parallel_chains = parallel::detectCores(),
   iter_warmup = 1e4,
   iter_sampling = 1e4,
-  adapt_delta = 0.999,
-  max_treedepth = 12) 
-# increased adapt_delta and max_treedepth to make sampler go slower and reduce divergences
+  adapt_delta = 0.999) 
+# increased adapt_delta to make sampler go slower and reduce divergences
 
 # 4.4 Model checks ####
 R_samples$summary() %>%
@@ -374,7 +342,7 @@ R_samples$summary() %>%
             rhat_sd = sd(rhat),
             ess_mean = mean(ess_bulk),
             ess_sd = sd(ess_bulk))
-# <1% rhat above 1.001
+# no rhat above 1.001
 # good effective sample size
 
 R_samples$draws(format = "df") %>%
@@ -389,96 +357,75 @@ R_prior <- prior_samples(
   model = R_mod,
   data = R_data %>% compose_data(),
   chains = 8, samples = 1e4)
-# Stan struggles to sample joint prior distributions of hierarchical models,
-# but it's good enough for a quick prior-posterior check.
+# Stan has no problem to sample joint prior distributions of hierarchical models
+# when non-centred parameterisation is used.
 
 # plot prior-posterior comparison for main parameters
 R_prior %>%
   prior_posterior_draws(posterior_samples = R_samples,
                         group = R_data %>% select(Species),
-                        parameters = c("alpha[Species]", "alpha_mu", "alpha_sigma", 
+                        parameters = c("GPmu[Species]", "GPmu_mu", "GPmu_sigma", 
                                        "beta[Species]", "beta_mu", "beta_sigma", 
                                        "sigma"),
                         format = "long") %>%
   prior_posterior_plot(group_name = "Species", ridges = FALSE)
 # posteriors are reasonably well constrained
 
-########################
-
 # 3.7 Predictions ####
-# Simulate smooth prior distributions using R
-CDR_prior <- tibble(
-  p_mu = rtruncnorm( 8 * 1e4 , mean = 0.5 , sd = 0.2 , a = 0 , b = 1 ), 
-  p_sigma = rexp( 8 * 1e4 , 1 ),
-  p = rtruncnorm( 8 * 1e4 , mean = p_mu , sd = p_sigma , a = 0 , b = 1 ),
-  sigma = rexp( 8 * 1e4 , 1 )
-)
-
-CDR_prior %>%
-  ggplot() +
-    geom_density(aes(p_mu), colour = "black") +
-    geom_density(aes(p), colour = "grey") +
-    scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
-
-# Simulate smooth posteriors with hyperparameters
-CDR_hyperposterior <- CDR_samples %>%
-  spread_draws(p_mu, p_sigma, sigma) %>% # simulate for unobserved corallines
-  mutate(p = rtruncnorm( n() , mean = p_mu , sd = p_sigma , a = 0 , b = 1 )) 
-
-CDR_hyperposterior %>%
-  ggplot() +
-    geom_density(aes(p_mu), colour = "black") +
-    geom_density(aes(p), colour = "grey") +
-    scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
-
-# Join priors and posteriors
-CDR_prior_posterior <- CDR_samples %>%
-  recover_types(CDR_data %>% select(Species)) %>%
-  spread_draws(p[Species], sigma) %>%
+R_prior_posterior <- R_samples %>%
+  spread_draws(GPmu[Species], beta[Species], sigma) %>%
   ungroup() %>%
   bind_rows(
-    CDR_hyperposterior %>% 
-      mutate(Species = "Branching corallines" %>% fct()) %>%
-      select(-c(p_mu, p_sigma)),
-    CDR_prior %>%
-      mutate(.chain = 1:8 %>% rep(each = 1e4),
-             .iteration = 1:1e4 %>% rep(8),
-             .draw = 1:(8*1e4),
-             Species = "Prior" %>% fct()) %>%
-      select(-c(p_mu, p_sigma))
+    R_prior %>%
+      prior_posterior_draws(posterior_samples = R_samples,
+                            group = tibble(NULL),
+                            parameters = c("GPmu_mu", "beta_mu", 
+                                           "GPmu_sigma", "beta_sigma", 
+                                           "sigma"),
+                            format = "short") %>%
+      mutate(GPmu = rnorm( n() , GPmu_mu , GPmu_sigma ),
+             beta = rnorm( n() , beta_mu , beta_sigma )) %>%
+      mutate(Species = if_else(distribution == "prior",
+                               "Prior", "Branching corallines") %>%
+                          fct()) %>%
+      select(-c(GPmu_mu, beta_mu, 
+                GPmu_sigma, beta_sigma,
+                distribution))
   )
 
-str(CDR_prior_posterior)
+str(R_prior_posterior)
 
-# Calculate percentage loss relative to naive CDR
-p_loss_summary <- CDR_prior_posterior %>%
+# Calculate probability of beta < 0
+beta_P <- R_prior_posterior %>%
   group_by(Species) %>%
-  mean_qi(mean = 1 - p, .width = 0.9) %>% # 1 - p represents the proportional loss
-  mutate(percentage = str_c(
-    signif(mean * 100, digits = 2), "[",
-    signif(.lower * 100, digits = 2), ",",
-    signif(.upper * 100, digits = 2), "]", "%"
-    ))
+  summarise(mean = mean(beta),
+            median = median(beta),
+            mode = mode_qi(beta)$y,
+            sd = sd(beta),
+            P = mean(beta < 0),
+            n = length(beta)) %>%
+  mutate(P_percentage = signif(P * 100, digits = 2) %>%
+           str_c("%"))
 
-# Plot 1 - p (complementary proportion which here is CDR loss)
+# Plot beta
 require(ggdist)
-Fig_5b <- CDR_prior_posterior %>%
+Fig_6b_1 <- R_prior_posterior %>%
   mutate(Species = Species %>% 
            fct_rev() %>%
            fct_relevel("Prior", after = Inf)) %>%
   ggplot() +
-    stat_slab(aes(y = Species, x = ( 1 - p ) * 100, fill = Species),
+    stat_slab(aes(y = Species, x = beta, fill = Species),
               height = 5, alpha = 0.5) +
-    geom_text(data = p_loss_summary, aes(x = 100, y = Species, label = percentage),
-              hjust = 1, vjust = -1, size = 3.5, family = "Futura") +
+    geom_vline(xintercept = 0) +
+    geom_text(data = beta_P, aes(x = 0.04, y = Species, label = P_percentage),
+              hjust = 1, vjust = -0.1, size = 3.5, family = "Futura") +
     scale_fill_manual(values = c("#363538", "#6b4d8d", "#f5a54a", "#ec7faa", "#b5b8ba"),
                       guide = guide_legend(reverse = TRUE)) +
-    labs(x = "CDR loss (%)") +
-    coord_cartesian(xlim = c(0, 100), ylim = c(1, 7.2),
+    scale_x_continuous(breaks = seq(-0.04, 0.04, 0.02),
+                       labels = scales::label_number(accuracy = c(0.01, 0.01, 1, 0.01, 0.01),
+                                                     style_negative = "minus")) +
+    labs(x = expression(italic(beta)*" (G:P"["n"]*" PIC:POC"^-1*")")) +
+    coord_cartesian(xlim = c(-0.04, 0.04), ylim = c(1, 8),
                     expand = FALSE, clip = "on") +
     mytheme +
     theme(legend.text = element_text(face = "italic"),
@@ -487,68 +434,100 @@ Fig_5b <- CDR_prior_posterior %>%
           axis.title.y = element_blank(),
           axis.line.y = element_blank())
 
+# Plot GPmu
+Fig_6b_2 <- R_prior_posterior %>%
+  mutate(Species = Species %>% 
+           fct_rev() %>%
+           fct_relevel("Prior", after = Inf)) %>%
+  ggplot() +
+    stat_slab(aes(y = Species, x = GPmu, fill = Species),
+              height = 5, alpha = 0.5) +
+    scale_fill_manual(values = c("#363538", "#6b4d8d", "#f5a54a", "#ec7faa", "#b5b8ba"),
+                      guide = guide_legend(reverse = TRUE)) +
+    scale_x_continuous(breaks = seq(0, 0.6, 0.2),
+                       labels = scales::label_number(accuracy = c(1, 0.1, 0.1, 0.1))) +
+    labs(x = expression(bar("G:P"["n"])*" (µmol CaCO"[3]*" µmol"^-1*" CO"[2]*")")) +
+    coord_cartesian(xlim = c(0, 0.6), ylim = c(1, 8.5),
+                    expand = FALSE, clip = "on") +
+    mytheme +
+    theme(legend.text = element_text(face = "italic"),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.title.y = element_blank(),
+          axis.line.y = element_blank())
 
 # Spread across predictor
-CDR_predictions <- CDR_prior_posterior %>%
-  left_join(CDR_data %>%
+R_predictions <- R_prior_posterior %>%
+  left_join(R_data %>%
               group_by(Species) %>%
-              summarise(min = min(CDR_naive_mean),
-                        max = max(CDR_naive_mean)),
+              summarise(min = min(PIC_POC_c),
+                        max = max(PIC_POC_c)),
             by = "Species") %>%
   mutate(min = if_else(is.na(min),
-                       CDR_data %$% min(CDR_naive_mean),
+                       R_data %$% min(PIC_POC_c),
                        min),
          max = if_else(is.na(max),
-                       CDR_data %$% max(CDR_naive_mean),
+                       R_data %$% max(PIC_POC_c),
                        max)) %>%
   rowwise() %>%
-  mutate(CDR_naive_mean = list( seq(min, max, length.out = 100) )) %>%
+  mutate(PIC_POC_c = list( seq(min, max, length.out = 100) )) %>%
   select(-c(min, max)) %>%
-  unnest(CDR_naive_mean) %>%
-  mutate(mu = p * CDR_naive_mean,
+  unnest(PIC_POC_c) %>%
+  mutate(mu = GPmu + beta * PIC_POC_c,
          obs = rnorm( n() , mu , sigma ))
 
-CDR_predictions_summary <- CDR_predictions %>%
-  group_by(Species, CDR_naive_mean) %>%
+R_predictions_summary <- R_predictions %>%
+  group_by(Species, PIC_POC_c) %>%
   reframe(mu = mu %>% mean_qi(.width = c(.5, .8, .9)),
           obs = obs %>% mean_qi(.width = c(.5, .8, .9))) %>%
-  unnest(c(mu, obs), names_sep = "_")
+  unnest(c(mu, obs), names_sep = "_") %>%
+  mutate(PIC_POC = PIC_POC_c + R_data %$% mean(PIC_POC)) # undo centring
 
-require(geomtextpath)
-Fig_5a <- CDR_predictions_summary %>%
-  ggplot() + # manually limit 1:1 line to 0-40 range
-    geom_textline(data = tibble(x = c(0, 1), y = c(0, 1)), aes(x, y),
-                  label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
-    geom_hdr(data = O2_C_estimates, aes(CDR_naive/1e3, CDR_true/1e3, fill = Species, group = ID),
-             alpha = 0.5, n = 600, method = "mvnorm", probs = 0.999) +
+# Load posteriors from Calcification.R
+GP_prior_posterior <- read_rds("GP_prior_posterior.rds")
+
+Fig_6a <- # data cannot be specified here because geom_textvline acts up
+  ggplot() +
+    geom_hline(yintercept = 0) +
+    geom_violin(data = C_estimates %>% drop_na(PIC_POC, G_P), 
+                aes(PIC_POC, G_P, fill = Species, colour = Species, group = ID),
+                alpha = 0.5, position = "identity", width = 1.2) +
+    geom_textvline(xintercept = 1, label = "1:1", family = "Futura", 
+                   size = 3.5, hjust = 1) +
     # geom_ribbon(data = . %>% filter(Species == "Branching corallines" & mu_.width == 0.9),
-    #             aes(CDR_naive_mean, ymin = mu_ymin, ymax = mu_ymax), 
+    #             aes(PIC_POC, ymin = mu_ymin, ymax = mu_ymax), 
     #             colour = NA, fill = "#363538", alpha = 0.3) +
-    geom_line(data = . %>% filter(!Species %in% c("Prior", "Branching corallines")),
-              aes(CDR_naive_mean/1e3, mu_y/1e3, colour = Species)) +
-    geom_ribbon(data = . %>% filter(!Species %in% c("Prior", "Branching corallines")),
-                aes(CDR_naive_mean/1e3, ymin = mu_ymin/1e3, ymax = mu_ymax/1e3,
+    geom_line(data = R_predictions_summary %>% 
+                filter(!Species %in% c("Prior", "Branching corallines")),
+              aes(PIC_POC, mu_y, colour = Species)) +
+    geom_ribbon(data = R_predictions_summary %>% 
+                  filter(!Species %in% c("Prior", "Branching corallines")),
+                aes(PIC_POC, ymin = mu_ymin, ymax = mu_ymax,
                     fill = Species, alpha = factor(mu_.width))) +
+    # stat_slab(data = mass, aes(x = PIC_POC, y = -0.5, fill = Species), 
+    #           colour = NA, alpha = 0.5, scale = 0.15, trim = FALSE, expand = TRUE) +
+    stat_slab(data = GP_prior_posterior %>%
+                filter(!Species %in% c("Prior", "Branching corallines")),
+              aes(y = GP, x = 0, fill = Species), 
+              colour = NA, alpha = 0.5, scale = -4) +
     scale_fill_manual(values = c("#ec7faa", "#f5a54a", "#6b4d8d"), guide = "none") +
     scale_colour_manual(values = c("#ec7faa", "#f5a54a", "#6b4d8d"), guide = "none") +
-    scale_alpha_manual(values = c(0.5, 0.5, 0.4, 0.3), guide = "none") + # geom_hdr requires additional alpha level
-    scale_x_continuous(breaks = seq(0, 2, 0.5),
-                       labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1))) +
-    scale_y_continuous(breaks = seq(0, 1, 0.25),
-                       labels = scales::label_number(accuracy = c(1, 0.01, 0.1, 0.01, 1))) +
-    labs(x = expression("CDR"["naive"]*" (mmol CO"[2]*" g"^-1*" d"^-1*")"),
-         y = expression("CDR"["true"]*" (mmol CO"[2]*" g"^-1*" d"^-1*")")) +
-    coord_cartesian(xlim = c(0, 2), ylim = c(0, 1),
+    scale_alpha_manual(values = c(0.5, 0.4, 0.3), guide = "none") +
+    scale_y_continuous(breaks = seq(-0.4, 0.8, 0.4),
+                       labels = scales::label_number(accuracy = c(0.1, 1, 0.1, 0.1),
+                                                     style_negative = "minus")) +
+    labs(x = "PIC:POC",
+         y = expression("G:P"["n"]*" (µmol CaCO"[3]*" µmol"^-1*" CO"[2]*")")) +
+    coord_cartesian(xlim = c(0, 40), ylim = c(-0.4, 0.8),
                     expand = FALSE, clip = "off") +
     mytheme +
     theme(legend.text = element_text(face = "italic"))
 
 require(patchwork)
-Fig_5 <- ( Fig_5a | Fig_5b ) +
+Fig_6 <- ( Fig_6a | Fig_6b_1 / Fig_6b_2 ) +
   plot_layout(guides = "collect") &
   theme(legend.position = "top")
 
-Fig_5 %>%
-  ggsave(filename = "Fig_5mod.pdf", path = "Figures",
+Fig_6 %>%
+  ggsave(filename = "Fig_6mod.pdf", path = "Figures",
          width = 22, height = 10, unit = "cm", device = cairo_pdf)
-

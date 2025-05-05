@@ -127,8 +127,8 @@ GP_data <- C_estimates_summary %>%
 
 require(truncnorm) # simulate from the truncated normal
 tibble(n = 1:1e3, # simulate hierachical prior
-       GP_mu = rtruncnorm( 1e3 , mean = 0.24 , sd = 0.2 , a = 0 ), # a is lower bound
-       GP_sigma = rexp( 1e3 , 1 ),
+       GP_mu = rtruncnorm( 1e3 , mean = 0.24 , sd = 0.1 , a = 0 ), # a is lower bound
+       GP_sigma = rexp( 1e3 , 10 ),
        GP = rtruncnorm( 1e3 , mean = GP_mu , sd = GP_sigma , a = 0 ),
        G0_mu = rnorm( 1e3 , 0 , 2 ),
        G0_sigma = rexp( 1e3 , 1 ),
@@ -184,8 +184,8 @@ parameters{
 
 model{
   // Hyperpriors
-  GP_mu ~ normal( 0.24 , 0.2 ) T[0,];
-  GP_sigma ~ exponential( 1 );
+  GP_mu ~ normal( 0.24 , 0.1 ) T[0,];
+  GP_sigma ~ exponential( 10 );
   G0_mu ~ normal( 0 , 2 );
   G0_sigma ~ exponential( 1 );
   
@@ -289,8 +289,8 @@ ggsave(
 # 3.7 Predictions ####
 # Simulate smooth prior distributions using R
 GP_prior <- tibble(
-  GP_mu = rtruncnorm( 8 * 1e4 , mean = 0.24 , sd = 0.2 , a = 0 ), 
-  GP_sigma = rexp( 8 * 1e4 , 1 ),
+  GP_mu = rtruncnorm( 8 * 1e4 , mean = 0.24 , sd = 0.1 , a = 0 ), 
+  GP_sigma = rexp( 8 * 1e4 , 10 ),
   GP = rtruncnorm( 8 * 1e4 , mean = GP_mu , sd = GP_sigma , a = 0 ),
   G0_mu = rnorm( 8 * 1e4 , 0 , 2 ),
   G0_sigma = rexp( 8 * 1e4 , 1 ),
@@ -302,7 +302,7 @@ GP_prior %>%
   ggplot() +
     geom_density(aes(GP_mu), colour = "black") +
     geom_density(aes(GP), colour = "grey") +
-    scale_x_continuous(limits = c(0, 5), oob = scales::oob_keep) +
+    scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
     theme_minimal() +
     theme(panel.grid = element_blank())
 
@@ -324,7 +324,7 @@ GP_hyperposterior %>%
   ggplot() +
     geom_density(aes(GP_mu), colour = "black") +
     geom_density(aes(GP), colour = "grey") +
-    scale_x_continuous(limits = c(0, 1), oob = scales::oob_keep) +
+    scale_x_continuous(limits = c(0, 0.6), oob = scales::oob_keep) +
     theme_minimal() +
     theme(panel.grid = element_blank())
 
@@ -355,6 +355,10 @@ GP_prior_posterior <- GP_samples %>%
 
 str(GP_prior_posterior)
 
+# Save GP estimates
+GP_prior_posterior %>%
+  write_rds("GP_prior_posterior.rds")
+
 # Calculate probability of G0 > 0
 G0_P <- GP_prior_posterior %>%
   group_by(Species) %>%
@@ -378,10 +382,10 @@ Fig_3b_1 <- GP_prior_posterior %>%
               height = 5, alpha = 0.5, n = 2e3) + # added samples to get smooth curvature of dist
     scale_fill_manual(values = c("#363538", "#6b4d8d", "#f5a54a", "#ec7faa", "#b5b8ba"),
                       guide = guide_legend(reverse = TRUE)) +
-    scale_x_continuous(breaks = seq(0, 1, 0.25),
-                       labels = scales::label_number(accuracy = c(1, 0.01, 0.1, 0.01, 1))) +
-    labs(x = expression("G:P (µmol CaCO"[3]*" µmol"^-1*" CO"[2]*")")) +
-    coord_cartesian(xlim = c(0, 1), ylim = c(1, 6.5),
+    scale_x_continuous(breaks = seq(0, 0.6, 0.2),
+                       labels = scales::label_number(accuracy = c(1, 0.1, 0.1, 0.1))) +
+    labs(x = expression("G:P"["n"]*" (µmol CaCO"[3]*" µmol"^-1*" CO"[2]*")")) +
+    coord_cartesian(xlim = c(0, 0.6), ylim = c(1, 6.8),
                     expand = FALSE, clip = "on") +
     mytheme +
     theme(legend.text = element_text(face = "italic"),
