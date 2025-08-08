@@ -1,4 +1,7 @@
-prior_samples <- function(model, data, n_name = "n", chains = 8, samples = 1e4) {
+prior_samples <- function(model, data, n_name = "n", 
+                          chains = 8, samples = 1e4,
+                          adapt_delta = NULL,
+                          max_treedepth = NULL) {
   
   empty_data <- data %>%
     purrr::modify_if(.p = ~ typeof(.x) == "double", ~ double(0)) %>%
@@ -10,7 +13,9 @@ prior_samples <- function(model, data, n_name = "n", chains = 8, samples = 1e4) 
     chains = chains,
     parallel_chains = parallel::detectCores(),
     iter_warmup = samples,
-    iter_sampling = samples)
+    iter_sampling = samples,
+    adapt_delta = adapt_delta,
+    max_treedepth = max_treedepth)
   
   return(prior_samples)
 }

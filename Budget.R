@@ -56,12 +56,12 @@ O2_C_estimates %>%
 
 # 2. Calculate CO2 budget ####
 # Calculate O2 budget and seawater density
+require(seacarb)
 O2_C_estimates %<>%
   mutate(CDR_naive = ( nP_O2 - R_O2 ) * 12, # assuming PQ = 1 and G = 0
          kg_L = rho(S = S_0_LD, T = T_LD) %>% as.numeric() * 1e-3) # convert g L^-1 to kg L^-1
 
 # Calculate psi
-require(seacarb)
 # seacarb::psi() cannot handle NAs for TA, DIC, S and T, so it is important to drop
 # NAs beforehand. There are no NAs in S and TA and DIC have the same missing rows so
 O2_C_estimates %<>% drop_na(TA_LD, T_LD)
@@ -292,7 +292,10 @@ source("functions.R")
 CDR_prior <- prior_samples(
   model = CDR_mod,
   data = CDR_data %>% compose_data(),
-  chains = 8, samples = 1e4)
+  chains = 8, samples = 1e4,
+  adapt_delta = 0.999,
+  max_treedepth = 15
+  )
 # Stan struggles to sample joint prior distributions of hierarchical models,
 # but it's good enough for a quick prior-posterior check.
 
@@ -307,23 +310,22 @@ CDR_prior %>%
 # posteriors are reasonably well constrained
 
 # check prior-posterior of estimates of true predictor
-ggsave(
-  CDR_samples %>%
-    spread_draws(CDR_naive[n]) %>%
-    mutate(CDR_naive_prior = rnorm(max(.draw), 860 , 400)) %>%
-    pivot_longer(cols = c(CDR_naive, CDR_naive_prior),
-                 values_to = "CDR_naive", names_to = "distribution") %>%
-    mutate(distribution = if_else(distribution %>% str_detect("prior"),
-                                  "prior", "posterior") %>% fct()) %>%
-    ggplot() +
+CDR_samples %>%
+  spread_draws(CDR_naive[n]) %>%
+  mutate(CDR_naive_prior = rnorm(max(.draw), 860 , 400)) %>%
+  pivot_longer(cols = c(CDR_naive, CDR_naive_prior),
+               values_to = "CDR_naive", names_to = "distribution") %>%
+  mutate(distribution = if_else(distribution %>% str_detect("prior"),
+                                "prior", "posterior") %>% fct()) %>%
+  { ggplot(.) +
       geom_density(aes(CDR_naive, alpha = distribution),
                    fill = "black", colour = NA) +
       scale_alpha_manual(values = c(0.6, 0.2)) +
       facet_wrap(~ n, scales = "free") +
       theme_minimal() +
-      theme(panel.grid = element_blank()),
-  filename = "CDR_prior_posterior.pdf", path = "Plots",
-  width = 80, height = 40, unit = "cm", device = cairo_pdf)
+      theme(panel.grid = element_blank()) } %>% 
+  ggsave(filename = "CDR_prior_posterior.pdf", path = "Plots",
+         width = 80, height = 40, unit = "cm", device = cairo_pdf)
 
 # 3.7 Predictions ####
 # Simulate smooth prior distributions using R
@@ -471,3 +473,395 @@ Fig_5 <- ( Fig_5a | Fig_5b ) +
 Fig_5 %>%
   ggsave(filename = "Fig_5mod.pdf", path = "Figures",
          width = 22, height = 10, unit = "cm", device = cairo_pdf)
+
+# 3.8 Animation ####
+# 3.8.1 Build geometries ####
+ellipses <- O2_C_estimates %>%
+  select(ID, Species, CDR_naive, CDR_true) %>%
+  rename(x = CDR_naive, y = CDR_true) %>%
+  group_by(ID, Species) %>%
+  nest() %>%
+  mutate(
+    hdr = data %>%
+      map(
+        ~ .x %>%
+          get_hdr(n = 600, method = "mvnorm", probs = 0.999,
+                  hdr_membership = FALSE) %$%
+          df_est %>%
+          filter(hdr == 0.999) %>%
+          slice(chull(x = x, y = y)) %>%
+          select(x, y)
+      )
+  ) %>%
+  select(-data) %>%
+  unnest(hdr) %>%
+  ungroup() %>%
+  ggplot(aes(x,y,group=ID,fill=Species)) +
+    geom_polygon()
+
+  
+  
+  reframe(x = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$x, 100),
+          y = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$y, 0)) %>%
+  group_by(Season) %>%
+  mutate(y = y * 16 / ( sum(y) * ( x[3] - x[2] ) ),
+         fill = if_else(
+           Season == "Prior", 
+           "#b5b8ba", "#7030a5"
+         )) %>%
+  ungroup() %T>%
+  print()
+
+lines <- grazing_prediction_summary %>%
+  filter(Season != "Annual") %>%
+  droplevels() %>%
+  select(Season, Consumption, mu) %>%
+  rename(x = Consumption, y = mu) %>%
+  mutate(colour = if_else(
+    Season == "Prior", 
+    "#b5b8ba", "#7030a5"
+  )) %T>%
+  print()
+
+ribbons <- grazing_prediction_summary %>%
+  filter(Season != "Annual") %>%
+  droplevels() %>%
+  group_by(Season, .width) %>%
+  reframe(x = c(Consumption, rev(Consumption)),
+          y = c(mu.upper, rev(mu.lower))) %>%
+  mutate(alpha = case_when(
+          .width == 0.9 ~ 0.5, 
+          .width == 0.8 ~ 0.4, 
+          .width == 0.5 ~ 0.3
+          ),
+         fill = if_else(
+           Season == "Prior", 
+           "#b5b8ba", "#7030a5"
+         )) %>%
+  select(-.width) %T>%
+  print()
+
+densities <- grazing_prior_posterior %>%
+  filter(Season != "Annual") %>%
+  droplevels() %>%
+  group_by(Season) %>%
+  reframe(x = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$x, 100),
+          y = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$y, 0)) %>%
+  group_by(Season) %>%
+  mutate(y = y * 16 / ( sum(y) * ( x[3] - x[2] ) ),
+         fill = if_else(
+           Season == "Prior", 
+           "#b5b8ba", "#7030a5"
+         )) %>%
+  ungroup() %T>%
+  print()
+
+# 3.8.5 Static plots ####
+mytheme <- theme(panel.background = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
+                 axis.line = element_line(),
+                 axis.title = element_text(size = 12, hjust = 0),
+                 axis.text = element_text(size = 10, colour = "black"),
+                 axis.ticks.length = unit(.25, "cm"),
+                 axis.ticks = element_line(colour = "black", lineend = "square"),
+                 legend.key = element_blank(),
+                 legend.key.width = unit(.25, "cm"),
+                 legend.key.height = unit(.45, "cm"),
+                 legend.key.spacing.x = unit(.5, "cm"),
+                 legend.key.spacing.y = unit(.05, "cm"),
+                 legend.background = element_blank(),
+                 legend.position = "top",
+                 legend.justification = 0,
+                 legend.text = element_text(size = 12, hjust = 0),
+                 legend.title = element_blank(),
+                 legend.margin = margin(0, 0, 0, 0, unit = "cm"),
+                 strip.background = element_blank(),
+                 strip.text = element_text(size = 12, hjust = 0),
+                 panel.spacing = unit(0.6, "cm"),
+                 text = element_text(family = "Futura"))
+
+ggplot() +
+  geom_textline(data = tibble(x = c(0, 5), y = c(0, 5)), aes(x, y),
+                label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
+  geom_point(data = grazing_points,
+             aes(x = x, y = y, alpha = alpha),
+             shape = 16, size = 2.5, colour = "#7030a5") +
+  geom_line(data = grazing_line,
+            aes(x = x, y = y, colour = colour, group = Season)) +
+  geom_polygon(data = grazing_ribbon,
+               aes(x = x, y = y, alpha = alpha, fill = fill,
+                   # Interaction grouping is only needed in the static version
+                   group = interaction(alpha, Season))) +
+  geom_polygon(data = consumption_dens,
+               aes(x = x, y = y, fill = fill)) +
+  geom_polygon(data = defecation_dens,
+               aes(x = x, y = y, fill = fill)) +
+  scale_alpha_identity() +
+  scale_colour_identity() +
+  scale_fill_identity() +
+  coord_cartesian(xlim = c(0, 10), ylim = c(0, 5),
+                  expand = FALSE, clip = "off") +
+  labs(x = expression("Consumption (mg g"^-1*" d"^-1*")"),
+       y = expression("Defecation (mg g"^-1*" d"^-1*")")) +
+  mytheme
+
+ggplot() +
+  geom_point(data = grazing_jitter,
+             aes(x = x, y = y, alpha = alpha),
+             shape = 16, size = 2.5, colour = "#7030a5") +
+  geom_polygon(data = grazing_dens,
+               aes(x = x, y = y, fill = fill)) +
+  scale_alpha_identity() +
+  scale_fill_identity() +
+  coord_cartesian(xlim = c(0, 100), ylim = c(-1, 2), 
+                  expand = FALSE, clip = "off") +
+  xlab("Defecation (%)") +
+  mytheme +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.line.y = element_blank())
+# All looks to be in order.
+
+# 3.8.6 Tween points ####
+grazing_points_ani <- bind_rows( # Here it's arbitrary pairings again
+  tween_state(grazing_points %>% filter(Season == "Prior"), 
+              grazing_points %>% filter(Season == "Spring"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50),
+  tween_state(grazing_points %>% filter(Season == "Spring"), 
+              grazing_points %>% filter(Season == "Summer"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_state(grazing_points %>% filter(Season == "Summer"), 
+              grazing_points %>% filter(Season == "Autumn"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300),
+  tween_state(grazing_points %>% filter(Season == "Autumn"), 
+              grazing_points %>% filter(Season == "Prior"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 450) 
+) %T>%
+  print()
+
+grazing_jitter_ani <- bind_rows(
+  tween_state(grazing_jitter %>% filter(Season == "Prior"), 
+              grazing_jitter %>% filter(Season == "Spring"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50),
+  tween_state(grazing_jitter %>% filter(Season == "Spring"), 
+              grazing_jitter %>% filter(Season == "Summer"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_state(grazing_jitter %>% filter(Season == "Summer"), 
+              grazing_jitter %>% filter(Season == "Autumn"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300),
+  tween_state(grazing_jitter %>% filter(Season == "Autumn"), 
+              grazing_jitter %>% filter(Season == "Prior"),
+              ease = "cubic-in-out", nframes = 100,
+              enter = enter, exit = exit) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 450) 
+) %T>%
+  print()
+
+# 6.6 Tween lines and polygons ####
+grazing_line_ani <- bind_rows(
+  tween_path(grazing_line %>% filter(Season == "Prior"), 
+             grazing_line %>% filter(Season == "Spring"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50),
+  tween_path(grazing_line %>% filter(Season == "Spring"), 
+             grazing_line %>% filter(Season == "Summer"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_path(grazing_line %>% filter(Season == "Summer"), 
+             grazing_line %>% filter(Season == "Autumn"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300),
+  tween_path(grazing_line %>% filter(Season == "Autumn"), 
+             grazing_line %>% filter(Season == "Prior"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 450) 
+) %T>%
+  print()
+# tween_state also works for lines of equal length, but 
+# I believe it is more stable to use tween_path.
+
+grazing_dens_ani <- bind_rows(
+  tween_polygon(grazing_dens %>% filter(Season == "Prior"),
+                grazing_dens %>% filter(Season == "Spring"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50),
+  tween_polygon(grazing_dens %>% filter(Season == "Spring"),
+                grazing_dens %>% filter(Season == "Summer"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_polygon(grazing_dens %>% filter(Season == "Summer"),
+                grazing_dens %>% filter(Season == "Autumn"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300),
+  tween_polygon(grazing_dens %>% filter(Season == "Autumn"),
+                grazing_dens %>% filter(Season == "Prior"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 450)
+) %T>%
+  print()
+
+grazing_ribbon_ani <- bind_rows(
+  tween_path(grazing_ribbon %>% filter(Season == "Prior"),
+             grazing_ribbon %>% filter(Season == "Spring"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50),
+  tween_path(grazing_ribbon %>% filter(Season == "Spring"),
+             grazing_ribbon %>% filter(Season == "Summer"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_path(grazing_ribbon %>% filter(Season == "Summer"),
+             grazing_ribbon %>% filter(Season == "Autumn"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300),
+  tween_path(grazing_ribbon %>% filter(Season == "Autumn"),
+             grazing_ribbon %>% filter(Season == "Prior"),
+             ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 450)
+) %T>%
+  print()
+# tween_path is more stable than tween_polygon for ribbons
+
+consumption_dens_ani <- bind_rows(
+  tween_polygon(consumption_dens %>% filter(Season == "Prior"),
+                consumption_dens %>% filter(Season == "Spring"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50),
+  tween_polygon(consumption_dens %>% filter(Season == "Spring"),
+                consumption_dens %>% filter(Season == "Summer"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_polygon(consumption_dens %>% filter(Season == "Summer"),
+                consumption_dens %>% filter(Season == "Autumn"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300),
+  tween_polygon(consumption_dens %>% filter(Season == "Autumn"),
+                consumption_dens %>% filter(Season == "Prior"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 450)
+) %T>%
+  print()
+
+defecation_dens_ani <- bind_rows(
+  tween_polygon(defecation_dens %>% filter(Season == "Prior"),
+                defecation_dens %>% filter(Season == "Spring"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50),
+  tween_polygon(defecation_dens %>% filter(Season == "Spring"),
+                defecation_dens %>% filter(Season == "Summer"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 150),
+  tween_polygon(defecation_dens %>% filter(Season == "Summer"),
+                defecation_dens %>% filter(Season == "Autumn"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 300),
+  tween_polygon(defecation_dens %>% filter(Season == "Autumn"),
+                defecation_dens %>% filter(Season == "Prior"),
+                ease = "cubic-in-out", nframes = 100) %>%
+    keep_state(nframes = 50) %>%
+    mutate(.frame = .frame + 450)
+) %T>%
+  print()
+
+# 6.7 Dynamic plots ####
+( ggplot() +
+    geom_textline(data = tibble(x = c(0, 5), y = c(0, 5)), aes(x, y),
+                  label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
+    geom_point(data = grazing_points_ani,
+               aes(x = x, y = y, alpha = alpha),
+               shape = 16, size = 2.5, colour = "#7030a5") +
+    geom_line(data = grazing_line_ani,
+              aes(x = x, y = y, colour = colour, group = Season)) +
+    geom_polygon(data = grazing_ribbon_ani,
+                 aes(x = x, y = y, alpha = alpha,
+                     fill = fill, group = alpha)) +
+    geom_polygon(data = consumption_dens_ani,
+                 aes(x = x, y = y, fill = fill)) +
+    geom_polygon(data = defecation_dens_ani,
+                 aes(x = x, y = y, fill = fill)) +
+    geom_text(data = grazing_line_ani %>%
+                distinct(Season, colour, .frame),
+              aes(x = 0.3, y = 4.8, label = Season, colour = colour),
+              hjust = 0, size = 5.3, family = "Futura", fontface = "bold") +
+    scale_alpha_identity() +
+    scale_colour_identity() +
+    scale_fill_identity() +
+    scale_x_continuous(breaks = seq(0, 10, 2)) +
+    coord_cartesian(xlim = c(0, 10), ylim = c(0, 5),
+                    expand = FALSE, clip = "off") +
+    labs(x = "Consumption (mg g<sup><span style='font-size:8.4pt'>−1</span></sup> 
+         d<sup><span style='font-size:8.4pt'>−1</span></sup>)",
+         y = "Defecation (mg g<sup><span style='font-size:8.4pt'>−1</span></sup> 
+         d<sup><span style='font-size:8.4pt'>−1</span></sup>)") +
+    transition_manual(.frame) +
+    mytheme +
+    theme(axis.title = element_markdown()) ) %>%
+  animate(nframes = 450, duration = 15,
+          width = 21 * 1/2, height = 10,
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
+  anim_save(filename = "grazing_left.gif", path = here("Figures", "Animations"))
+
+( ggplot() +
+    geom_point(data = grazing_jitter_ani,
+               aes(x = x, y = y, alpha = alpha),
+               shape = 16, size = 2.5, colour = "#7030a5") +
+    geom_polygon(data = grazing_dens_ani,
+                 aes(x = x, y = y, fill = fill)) +
+    scale_alpha_identity() +
+    scale_fill_identity() +
+    coord_cartesian(xlim = c(0, 100), ylim = c(-1, 2), 
+                    expand = FALSE, clip = "off") +
+    xlab("Defecation (%)<sup><span style='color:white;font-size:8.4pt'>−1</span></sup>") +
+    transition_manual(.frame) +
+    mytheme +
+    theme(axis.title = element_markdown(),
+          axis.title.y = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.line.y = element_blank()) ) %>%
+  animate(nframes = 450, duration = 15,
+          width = 21 * 1/2, height = 10,
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
+  anim_save(filename = "grazing_right.gif", path = here("Figures", "Animations"))
+
+
+
+
+
