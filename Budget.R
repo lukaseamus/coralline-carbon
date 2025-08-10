@@ -476,6 +476,113 @@ Fig_5 %>%
 
 # 3.8 Animation ####
 # 3.8.1 Build geometries ####
+# Load internal ggdensity functions from 
+# https://github.com/jamesotto852/ggdensity/tree/main/R.
+fix_probs <- function(probs) {
+  stopifnot("Probabilities must be between 0 and 1, exclusive" = all(probs > 0) & all(probs < 1))
+  
+  sort(probs, decreasing = TRUE)
+}
+
+tibble0 <- function(...) {
+  tibble::tibble(..., .name_repair = "minimal")
+}
+
+unique0 <- function(x, ...) {
+  if (is.null(x)) x else vctrs::vec_unique(x, ...)
+}
+
+isoband_z_matrix <- function(data) {
+  x_pos <- as.integer(factor(data$x, levels = sort(unique0(data$x))))
+  y_pos <- as.integer(factor(data$y, levels = sort(unique0(data$y))))
+  nrow <- max(y_pos)
+  ncol <- max(x_pos)
+  raster <- matrix(NA_real_, nrow = nrow, ncol = ncol)
+  raster[cbind(y_pos, x_pos)] <- data$z
+  raster
+}
+
+xyz_to_isobands <- function(data, breaks) {
+  isoband::isobands(x = sort(unique0(data$x)), y = sort(unique0(data$y)),
+                    z = isoband_z_matrix(data), levels_low = breaks[-length(breaks)],
+                    levels_high = breaks[-1])
+}
+
+iso_to_polygon <- function(iso, group = 1) {
+  lengths <- vapply(iso, function(x) length(x$x), integer(1))
+  if (all(lengths == 0)) {
+    warning("Zero contours were generated")
+    return(tibble0())
+  }
+  levels <- names(iso)
+  xs <- unlist(lapply(iso, "[[", "x"), use.names = FALSE)
+  ys <- unlist(lapply(iso, "[[", "y"), use.names = FALSE)
+  ids <- unlist(lapply(iso, "[[", "id"), use.names = FALSE)
+  item_id <- rep(seq_along(iso), lengths)
+  groups <- paste(group, sprintf("%03d", item_id), sep = "-")
+  groups <- factor(groups)
+  tibble0(level = rep(levels, lengths), x = xs, y = ys,
+          piece = as.integer(groups), group = groups, subgroup = ids,
+          .size = length(xs))
+}
+
+# And finally an abbreviated version of res_to_df:
+res_to_df <- function(res, probs, group) {
+  
+  probs <- fix_probs(probs)
+  
+  # Need z for xyz_to_isobands/lines()
+  res$df_est$z <- res$df_est$fhat
+
+  isobands <- xyz_to_isobands(res$df_est, res$breaks)
+  names(isobands) <- scales::percent_format(accuracy = 1)(probs)
+  df <- iso_to_polygon(isobands, group)
+  df$probs <- ordered(df$level, levels = names(isobands))
+  df$level <- NULL
+
+  df
+  
+}
+
+O2_C_estimates <- tibble(
+  CDR_naive = c(rnorm(1e3, 1, 0.5), rnorm(1e3, 2, 0.8), rnorm(1e3, 0.5, 0.4),
+                rnorm(1e3, 0.4, 0.1), rnorm(1e3, 0.3, 0.2), rnorm(1e3, 3, 0.8)),
+  CDR_true = c(rnorm(1e3, 0.3, 0.2), rnorm(1e3, 2.5, 1), rnorm(1e3, 0.7, 0.25),
+               rnorm(1e3, 1.5, 0.45), rnorm(1e3, 4, 2), rnorm(1e3, 0.1, 0.1)),
+  ID = c("A1", "A2", "A3", "A4", "A5", "A6") %>% rep(each = 1e3),
+  Species = c("bug1", "bug2", "bug3") %>% rep(each = 2e3)
+) %T>%
+  print()
+
+ellipses <- O2_C_estimates %>%
+  select(ID, Species, CDR_naive, CDR_true) %>%
+  rename(x = CDR_naive, y = CDR_true) %>%
+  group_by(ID, Species) %>%
+  nest() %>%
+  mutate(
+    hdr = map2(
+      data, ID,
+      ~ .x %>%
+        get_hdr(n = 600, method = "mvnorm", probs = c(0.5, 0.7, 0.9)) %>%
+        res_to_df(probs = c(0.5, 0.7, 0.9), group = .y) %>%
+        group_by(group, piece) %>%
+        bind_rows(slice(., 1)) %>%
+        ungroup()
+    )
+  ) %>%
+  select(-data) %>%
+  unnest(hdr) %>%
+  ungroup() %T>%
+  print()
+
+ellipses %>%
+  ggplot() +
+    geom_path(aes(x, y, colour = group)) +
+    #geom_point(data = O2_C_estimates, aes(CDR_naive, CDR_true)) +
+    theme_minimal()
+
+
+
 ellipses <- O2_C_estimates %>%
   select(ID, Species, CDR_naive, CDR_true) %>%
   rename(x = CDR_naive, y = CDR_true) %>%
@@ -485,10 +592,10 @@ ellipses <- O2_C_estimates %>%
     hdr = data %>%
       map(
         ~ .x %>%
-          get_hdr(n = 600, method = "mvnorm", probs = 0.999,
+          get_hdr(n = 600, method = "kde", probs = 0.8,
                   hdr_membership = FALSE) %$%
           df_est %>%
-          filter(hdr == 0.999) %>%
+          filter(hdr == 0.8) %>%
           slice(chull(x = x, y = y)) %>%
           select(x, y)
       )
@@ -496,8 +603,8 @@ ellipses <- O2_C_estimates %>%
   select(-data) %>%
   unnest(hdr) %>%
   ungroup() %>%
-  ggplot(aes(x,y,group=ID,fill=Species)) +
-    geom_polygon()
+  ggplot(aes(x, y, group = ID, fill = Species)) +
+    geom_polygon(alpha = 0.5)
 
   
   
