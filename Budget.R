@@ -438,7 +438,7 @@ CDR_predictions_summary <- CDR_predictions %>%
 
 require(geomtextpath)
 Fig_5a <- CDR_predictions_summary %>%
-  ggplot() + # manually limit 1:1 line to 0-40 range
+  ggplot() +
     geom_textline(data = tibble(x = c(0, 1), y = c(0, 1)), aes(x, y),
                   label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
     geom_hdr(data = O2_C_estimates, aes(CDR_naive/1e3, CDR_true/1e3, fill = Species, group = ID),
@@ -526,436 +526,396 @@ iso_to_polygon <- function(iso, group = 1) {
           .size = length(xs))
 }
 
-# And finally an abbreviated version of res_to_df:
-res_to_df <- function(res, probs, group) {
+xyz_to_isolines <- function(data, breaks) {
+  isoband::isolines(x = sort(unique0(data$x)), y = sort(unique0(data$y)),
+                    z = isoband_z_matrix(data), levels = breaks)
+}
+
+iso_to_path <- function(iso, group = 1) {
+  lengths <- vapply(iso, function(x) length(x$x), integer(1))
+  if (all(lengths == 0)) {
+    warning("Zero contours were generated")
+    return(tibble0())
+  }
+  levels <- names(iso)
+  xs <- unlist(lapply(iso, "[[", "x"), use.names = FALSE)
+  ys <- unlist(lapply(iso, "[[", "y"), use.names = FALSE)
+  ids <- unlist(lapply(iso, "[[", "id"), use.names = FALSE)
+  item_id <- rep(seq_along(iso), lengths)
+  groups <- paste(group, sprintf("%03d", item_id), sprintf("%03d",
+                                                           ids), sep = "-")
+  groups <- factor(groups)
+  tibble0(level = rep(levels, lengths), x = xs, y = ys,
+          piece = as.integer(groups), group = groups, .size = length(xs))
+}
+
+res_to_df <- function(res, probs, group, output) {
   
   probs <- fix_probs(probs)
   
   # Need z for xyz_to_isobands/lines()
   res$df_est$z <- res$df_est$fhat
-
-  isobands <- xyz_to_isobands(res$df_est, res$breaks)
-  names(isobands) <- scales::percent_format(accuracy = 1)(probs)
-  df <- iso_to_polygon(isobands, group)
-  df$probs <- ordered(df$level, levels = names(isobands))
-  df$level <- NULL
-
+  
+  if (output == "bands") {
+    
+    isobands <- xyz_to_isobands(res$df_est, res$breaks)
+    names(isobands) <- scales::percent_format(accuracy = 1)(probs)
+    df <- iso_to_polygon(isobands, group)
+    df$probs <- ordered(df$level, levels = names(isobands))
+    df$level <- NULL
+    
+  } else if (output == "lines") {
+    
+    isolines <- xyz_to_isolines(res$df_est, res$breaks)
+    names(isolines) <- scales::percent_format(accuracy = 1)(probs)
+    df <- iso_to_path(isolines, group)
+    df$probs <- ordered(df$level, levels = names(isolines))
+    df$level <- NULL
+    
+  } else if (output == "points") {
+    
+    df <- res$data
+    df$hdr_membership <- scales::percent_format(accuracy = 1)(df$hdr_membership)
+    df$probs <- ordered(df$hdr_membership, levels = scales::percent_format(accuracy = 1)(c(1, probs)))
+    df$hdr_membership <- NULL
+    
+  }
+  
   df
   
 }
 
-O2_C_estimates <- tibble(
-  CDR_naive = c(rnorm(1e3, 1, 0.5), rnorm(1e3, 2, 0.8), rnorm(1e3, 0.5, 0.4),
-                rnorm(1e3, 0.4, 0.1), rnorm(1e3, 0.3, 0.2), rnorm(1e3, 3, 0.8)),
-  CDR_true = c(rnorm(1e3, 0.3, 0.2), rnorm(1e3, 2.5, 1), rnorm(1e3, 0.7, 0.25),
-               rnorm(1e3, 1.5, 0.45), rnorm(1e3, 4, 2), rnorm(1e3, 0.1, 0.1)),
-  ID = c("A1", "A2", "A3", "A4", "A5", "A6") %>% rep(each = 1e3),
-  Species = c("bug1", "bug2", "bug3") %>% rep(each = 2e3)
-) %T>%
-  print()
+# O2_C_estimates <- tibble(
+#   CDR_naive = c(rnorm(1e3, 1, 0.5), rnorm(1e3, 2, 0.8), rnorm(1e3, 0.5, 0.4),
+#                 rnorm(1e3, 0.4, 0.1), rnorm(1e3, 0.3, 0.2), rnorm(1e3, 3, 0.8)),
+#   CDR_true = c(rnorm(1e3, 0.3, 0.2), rnorm(1e3, 2.5, 1), rnorm(1e3, 0.7, 0.25),
+#                rnorm(1e3, 1.5, 0.45), rnorm(1e3, 4, 2), rnorm(1e3, 0.1, 0.1)),
+#   ID = c("A1", "A2", "A3", "A4", "A5", "A6") %>% rep(each = 1e3),
+#   Species = c("bug1", "bug2", "bug3") %>% rep(each = 2e3)
+# ) %T>%
+#   print()
 
 ellipses <- O2_C_estimates %>%
   select(ID, Species, CDR_naive, CDR_true) %>%
   rename(x = CDR_naive, y = CDR_true) %>%
+  mutate(x = x/1e3, y = y/1e3) %>% # convert µmol to mmol
   group_by(ID, Species) %>%
   nest() %>%
   mutate(
     hdr = map2(
       data, ID,
       ~ .x %>%
-        get_hdr(n = 600, method = "mvnorm", probs = c(0.5, 0.7, 0.9)) %>%
-        res_to_df(probs = c(0.5, 0.7, 0.9), group = .y) %>%
-        group_by(group, piece) %>%
-        bind_rows(slice(., 1)) %>%
-        ungroup()
+        get_hdr(n = 600, method = "mvnorm", probs = 0.999,
+                rangex = .x %$% c(min(x) - 0.1, max(x) + 0.1), # add buffer
+                rangey = .x %$% c(min(y) - 0.1, max(y) + 0.1),
+                hdr_membership = FALSE) %>%
+        res_to_df(probs = 0.999, group = .y, output = "bands")
     )
   ) %>%
   select(-data) %>%
   unnest(hdr) %>%
-  ungroup() %T>%
-  print()
-
-ellipses %>%
-  ggplot() +
-    geom_path(aes(x, y, colour = group)) +
-    #geom_point(data = O2_C_estimates, aes(CDR_naive, CDR_true)) +
-    theme_minimal()
-
-
-
-ellipses <- O2_C_estimates %>%
-  select(ID, Species, CDR_naive, CDR_true) %>%
-  rename(x = CDR_naive, y = CDR_true) %>%
-  group_by(ID, Species) %>%
-  nest() %>%
-  mutate(
-    hdr = data %>%
-      map(
-        ~ .x %>%
-          get_hdr(n = 600, method = "kde", probs = 0.8,
-                  hdr_membership = FALSE) %$%
-          df_est %>%
-          filter(hdr == 0.8) %>%
-          slice(chull(x = x, y = y)) %>%
-          select(x, y)
-      )
-  ) %>%
-  select(-data) %>%
-  unnest(hdr) %>%
   ungroup() %>%
-  ggplot(aes(x, y, group = ID, fill = Species)) +
-    geom_polygon(alpha = 0.5)
+  mutate(
+    fill = case_when(
+      Species == "Amphiroa anceps" ~ "#ec7faa",
+      Species == "Jania rosea" ~ "#f5a54a",
+      Species == "Metamastophora flabellata" ~ "#6b4d8d"
+    ),
+    alpha = 0.5,
+    id = group %>% 
+      str_c(subgroup) %>% 
+      str_split_i(pattern = "_",
+                  i = 2)
+  ) %>%
+  select(-c(piece, .size, probs)) %T>%
+  print()
 
-  
-  
-  reframe(x = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$x, 100),
-          y = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$y, 0)) %>%
-  group_by(Season) %>%
-  mutate(y = y * 16 / ( sum(y) * ( x[3] - x[2] ) ),
-         fill = if_else(
-           Season == "Prior", 
-           "#b5b8ba", "#7030a5"
-         )) %>%
+lines <- CDR_predictions_summary %>%
+  filter(!Species %in% c("Prior", "Branching corallines")) %>%
+  droplevels() %>%
+  select(Species, CDR_naive_mean, mu_y) %>%
+  rename(x = CDR_naive_mean, y = mu_y) %>%
+  mutate(
+    x = x/1e3, y = y/1e3,
+    colour = case_when(
+      Species == "Amphiroa anceps" ~ "#ec7faa",
+      Species == "Jania rosea" ~ "#f5a54a",
+      Species == "Metamastophora flabellata" ~ "#6b4d8d"
+    )
+  ) %T>%
+  print()
+
+ribbons <- CDR_predictions_summary %>%
+  filter(!Species %in% c("Prior", "Branching corallines")) %>%
+  droplevels() %>%
+  group_by(Species, mu_.width) %>%
+  reframe(x = c(CDR_naive_mean, rev(CDR_naive_mean)),
+          y = c(mu_ymax, rev(mu_ymin))) %>%
+  mutate(
+    x = x/1e3, y = y/1e3,
+    alpha = case_when(
+      mu_.width == 0.9 ~ 0.5, 
+      mu_.width == 0.8 ~ 0.4, 
+      mu_.width == 0.5 ~ 0.3
+    ),
+    fill = case_when(
+      Species == "Amphiroa anceps" ~ "#ec7faa",
+      Species == "Jania rosea" ~ "#f5a54a",
+      Species == "Metamastophora flabellata" ~ "#6b4d8d"
+    )
+  ) %>%
+  select(-mu_.width) %T>%
+  print()
+
+densities <- CDR_prior_posterior %>%
+  filter(!Species %in% c("Prior", "Branching corallines")) %>%
+  droplevels() %>%
+  mutate(p_c = ( 1 - p ) * 100) %>% # calculate complementary proportion as percentage
+  group_by(Species) %>%
+  reframe(x = c(0, density(p_c, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$x, 100),
+          y = c(0, density(p_c, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$y, 0)) %>%
+  group_by(Species) %>%
+  mutate(
+    y = y * 10 / ( sum(y) * 100 / 2^10 ), # Riemann sum (range/n = x[3] - x[2])
+    fill = case_when(
+      Species == "Amphiroa anceps" ~ "#ec7faa",
+      Species == "Jania rosea" ~ "#f5a54a",
+      Species == "Metamastophora flabellata" ~ "#6b4d8d"
+    )
+  ) %>%
   ungroup() %T>%
   print()
 
-lines <- grazing_prediction_summary %>%
-  filter(Season != "Annual") %>%
-  droplevels() %>%
-  select(Season, Consumption, mu) %>%
-  rename(x = Consumption, y = mu) %>%
-  mutate(colour = if_else(
-    Season == "Prior", 
-    "#b5b8ba", "#7030a5"
-  )) %T>%
-  print()
-
-ribbons <- grazing_prediction_summary %>%
-  filter(Season != "Annual") %>%
-  droplevels() %>%
-  group_by(Season, .width) %>%
-  reframe(x = c(Consumption, rev(Consumption)),
-          y = c(mu.upper, rev(mu.lower))) %>%
-  mutate(alpha = case_when(
-          .width == 0.9 ~ 0.5, 
-          .width == 0.8 ~ 0.4, 
-          .width == 0.5 ~ 0.3
-          ),
-         fill = if_else(
-           Season == "Prior", 
-           "#b5b8ba", "#7030a5"
-         )) %>%
-  select(-.width) %T>%
-  print()
-
-densities <- grazing_prior_posterior %>%
-  filter(Season != "Annual") %>%
-  droplevels() %>%
-  group_by(Season) %>%
-  reframe(x = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$x, 100),
-          y = c(0, density(beta, n = 2^10, from = 0, to = 100, bw = 100 * 0.01)$y, 0)) %>%
-  group_by(Season) %>%
-  mutate(y = y * 16 / ( sum(y) * ( x[3] - x[2] ) ),
-         fill = if_else(
-           Season == "Prior", 
-           "#b5b8ba", "#7030a5"
-         )) %>%
-  ungroup() %T>%
-  print()
-
-# 3.8.5 Static plots ####
-mytheme <- theme(panel.background = element_blank(),
-                 panel.grid.major = element_blank(),
-                 panel.grid.minor = element_blank(),
-                 panel.border = element_blank(),
-                 plot.margin = margin(0.2, 0.5, 0.2, 0.2, unit = "cm"),
-                 axis.line = element_line(),
-                 axis.title = element_text(size = 12, hjust = 0),
-                 axis.text = element_text(size = 10, colour = "black"),
-                 axis.ticks.length = unit(.25, "cm"),
-                 axis.ticks = element_line(colour = "black", lineend = "square"),
-                 legend.key = element_blank(),
-                 legend.key.width = unit(.25, "cm"),
-                 legend.key.height = unit(.45, "cm"),
-                 legend.key.spacing.x = unit(.5, "cm"),
-                 legend.key.spacing.y = unit(.05, "cm"),
-                 legend.background = element_blank(),
-                 legend.position = "top",
-                 legend.justification = 0,
-                 legend.text = element_text(size = 12, hjust = 0),
-                 legend.title = element_blank(),
-                 legend.margin = margin(0, 0, 0, 0, unit = "cm"),
-                 strip.background = element_blank(),
-                 strip.text = element_text(size = 12, hjust = 0),
-                 panel.spacing = unit(0.6, "cm"),
-                 text = element_text(family = "Futura"))
-
+# 3.8.2 Static plots ####
+require(ggnewscale)
 ggplot() +
-  geom_textline(data = tibble(x = c(0, 5), y = c(0, 5)), aes(x, y),
+  geom_textline(data = tibble(x = c(0, 0.75), y = c(0, 0.75)), aes(x, y),
                 label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
-  geom_point(data = grazing_points,
-             aes(x = x, y = y, alpha = alpha),
-             shape = 16, size = 2.5, colour = "#7030a5") +
-  geom_line(data = grazing_line,
-            aes(x = x, y = y, colour = colour, group = Season)) +
-  geom_polygon(data = grazing_ribbon,
-               aes(x = x, y = y, alpha = alpha, fill = fill,
+  geom_polygon(data = ellipses,
+               aes(x = x, y = y, fill = fill, alpha = alpha, 
+                   group = group, subgroup = subgroup)) +
+  geom_line(data = lines,
+            aes(x = x, y = y, colour = colour)) +
+  geom_polygon(data = ribbons,
+               aes(x = x, y = y, fill = fill, alpha = alpha,
                    # Interaction grouping is only needed in the static version
-                   group = interaction(alpha, Season))) +
-  geom_polygon(data = consumption_dens,
-               aes(x = x, y = y, fill = fill)) +
-  geom_polygon(data = defecation_dens,
-               aes(x = x, y = y, fill = fill)) +
+                   group = interaction(alpha, Species))) +
   scale_alpha_identity() +
   scale_colour_identity() +
   scale_fill_identity() +
-  coord_cartesian(xlim = c(0, 10), ylim = c(0, 5),
+  new_scale_fill() +
+  geom_polygon(data = ellipses %>% mutate(x = Inf), # Add new fill geometry for legend
+               aes(x = x, y = y, fill = Species)) +
+  scale_fill_manual(values = c("#ec7faa", "#f5a54a", "#6b4d8d")) +
+  scale_x_continuous(breaks = seq(0, 2, 0.5),
+                     labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1))) +
+  scale_y_continuous(breaks = seq(0, 0.75, 0.25),
+                     labels = scales::label_number(accuracy = c(1, 0.01, 0.1, 0.01))) +
+  labs(x = expression("CDR"["naive"]*" (mmol CO"[2]*" g"^-1*" d"^-1*")"),
+       y = expression("CDR"["true"]*" (mmol CO"[2]*" g"^-1*" d"^-1*")")) +
+  coord_cartesian(xlim = c(0, 2), ylim = c(0, 0.75),
                   expand = FALSE, clip = "off") +
-  labs(x = expression("Consumption (mg g"^-1*" d"^-1*")"),
-       y = expression("Defecation (mg g"^-1*" d"^-1*")")) +
-  mytheme
+  mytheme +
+  theme(legend.text = element_text(face = "italic"))
 
 ggplot() +
-  geom_point(data = grazing_jitter,
-             aes(x = x, y = y, alpha = alpha),
-             shape = 16, size = 2.5, colour = "#7030a5") +
-  geom_polygon(data = grazing_dens,
+  geom_polygon(data = densities,
                aes(x = x, y = y, fill = fill)) +
-  scale_alpha_identity() +
   scale_fill_identity() +
-  coord_cartesian(xlim = c(0, 100), ylim = c(-1, 2), 
-                  expand = FALSE, clip = "off") +
-  xlab("Defecation (%)") +
+  xlab("CDR loss (%)") +
+  coord_cartesian(expand = FALSE, clip = "off") +
   mytheme +
-  theme(axis.title.y = element_blank(),
+  theme(legend.text = element_text(face = "italic"),
         axis.text.y = element_blank(),
         axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
         axis.line.y = element_blank())
 # All looks to be in order.
 
-# 3.8.6 Tween points ####
-grazing_points_ani <- bind_rows( # Here it's arbitrary pairings again
-  tween_state(grazing_points %>% filter(Season == "Prior"), 
-              grazing_points %>% filter(Season == "Spring"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
+# 3.8.3 Tween geometries ####
+# As per usual there is an uneven sample size, so not all points can be paired.
+# Define enter/exit functions
+enter <- function(data){
+  data$alpha <- 0
+  data
+}
+
+exit <- function(data){
+  data$alpha <- 0
+  data
+}
+
+require(tweenr)
+require(transformr)
+ellipses_ani <- bind_rows(
+  tween_polygon(ellipses %>% filter(Species == "Amphiroa anceps"),
+                ellipses %>% filter(Species == "Jania rosea"),
+                ease = "cubic-in-out", nframes = 100,
+                id = id, enter = enter, exit = exit) %>%
     keep_state(nframes = 50),
-  tween_state(grazing_points %>% filter(Season == "Spring"), 
-              grazing_points %>% filter(Season == "Summer"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
+  tween_polygon(ellipses %>% filter(Species == "Jania rosea"),
+                ellipses %>% filter(Species == "Metamastophora flabellata"),
+                ease = "cubic-in-out", nframes = 100,
+                id = id, enter = enter, exit = exit) %>%
     keep_state(nframes = 50) %>%
     mutate(.frame = .frame + 150),
-  tween_state(grazing_points %>% filter(Season == "Summer"), 
-              grazing_points %>% filter(Season == "Autumn"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
+  tween_polygon(ellipses %>% filter(Species == "Metamastophora flabellata"),
+                ellipses %>% filter(Species == "Amphiroa anceps"),
+                ease = "cubic-in-out", nframes = 100,
+                id = id, enter = enter, exit = exit) %>%
     keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 300),
-  tween_state(grazing_points %>% filter(Season == "Autumn"), 
-              grazing_points %>% filter(Season == "Prior"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 450) 
+    mutate(.frame = .frame + 300)
 ) %T>%
   print()
 
-grazing_jitter_ani <- bind_rows(
-  tween_state(grazing_jitter %>% filter(Season == "Prior"), 
-              grazing_jitter %>% filter(Season == "Spring"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
+lines_ani <- bind_rows(
+  tween_path(lines %>% filter(Species == "Amphiroa anceps"),
+             lines %>% filter(Species == "Jania rosea"),
+             ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50),
-  tween_state(grazing_jitter %>% filter(Season == "Spring"), 
-              grazing_jitter %>% filter(Season == "Summer"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
+  tween_path(lines %>% filter(Species == "Jania rosea"),
+             lines %>% filter(Species == "Metamastophora flabellata"),
+             ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50) %>%
     mutate(.frame = .frame + 150),
-  tween_state(grazing_jitter %>% filter(Season == "Summer"), 
-              grazing_jitter %>% filter(Season == "Autumn"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
+  tween_path(lines %>% filter(Species == "Metamastophora flabellata"),
+             lines %>% filter(Species == "Amphiroa anceps"),
+             ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 300),
-  tween_state(grazing_jitter %>% filter(Season == "Autumn"), 
-              grazing_jitter %>% filter(Season == "Prior"),
-              ease = "cubic-in-out", nframes = 100,
-              enter = enter, exit = exit) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 450) 
+    mutate(.frame = .frame + 300)
 ) %T>%
   print()
 
-# 6.6 Tween lines and polygons ####
-grazing_line_ani <- bind_rows(
-  tween_path(grazing_line %>% filter(Season == "Prior"), 
-             grazing_line %>% filter(Season == "Spring"),
+ribbons_ani <- bind_rows(
+  tween_path(ribbons %>% filter(Species == "Amphiroa anceps"),
+             ribbons %>% filter(Species == "Jania rosea"),
              ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50),
-  tween_path(grazing_line %>% filter(Season == "Spring"), 
-             grazing_line %>% filter(Season == "Summer"),
+  tween_path(ribbons %>% filter(Species == "Jania rosea"),
+             ribbons %>% filter(Species == "Metamastophora flabellata"),
              ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50) %>%
     mutate(.frame = .frame + 150),
-  tween_path(grazing_line %>% filter(Season == "Summer"), 
-             grazing_line %>% filter(Season == "Autumn"),
+  tween_path(ribbons %>% filter(Species == "Metamastophora flabellata"),
+             ribbons %>% filter(Species == "Amphiroa anceps"),
              ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 300),
-  tween_path(grazing_line %>% filter(Season == "Autumn"), 
-             grazing_line %>% filter(Season == "Prior"),
-             ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 450) 
-) %T>%
-  print()
-# tween_state also works for lines of equal length, but 
-# I believe it is more stable to use tween_path.
-
-grazing_dens_ani <- bind_rows(
-  tween_polygon(grazing_dens %>% filter(Season == "Prior"),
-                grazing_dens %>% filter(Season == "Spring"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50),
-  tween_polygon(grazing_dens %>% filter(Season == "Spring"),
-                grazing_dens %>% filter(Season == "Summer"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 150),
-  tween_polygon(grazing_dens %>% filter(Season == "Summer"),
-                grazing_dens %>% filter(Season == "Autumn"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 300),
-  tween_polygon(grazing_dens %>% filter(Season == "Autumn"),
-                grazing_dens %>% filter(Season == "Prior"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 450)
+    mutate(.frame = .frame + 300)
 ) %T>%
   print()
 
-grazing_ribbon_ani <- bind_rows(
-  tween_path(grazing_ribbon %>% filter(Season == "Prior"),
-             grazing_ribbon %>% filter(Season == "Spring"),
-             ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50),
-  tween_path(grazing_ribbon %>% filter(Season == "Spring"),
-             grazing_ribbon %>% filter(Season == "Summer"),
-             ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 150),
-  tween_path(grazing_ribbon %>% filter(Season == "Summer"),
-             grazing_ribbon %>% filter(Season == "Autumn"),
-             ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 300),
-  tween_path(grazing_ribbon %>% filter(Season == "Autumn"),
-             grazing_ribbon %>% filter(Season == "Prior"),
-             ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 450)
-) %T>%
-  print()
-# tween_path is more stable than tween_polygon for ribbons
-
-consumption_dens_ani <- bind_rows(
-  tween_polygon(consumption_dens %>% filter(Season == "Prior"),
-                consumption_dens %>% filter(Season == "Spring"),
+densities_ani <- bind_rows(
+  tween_polygon(densities %>% filter(Species == "Amphiroa anceps"),
+                densities %>% filter(Species == "Jania rosea"),
                 ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50),
-  tween_polygon(consumption_dens %>% filter(Season == "Spring"),
-                consumption_dens %>% filter(Season == "Summer"),
+  tween_polygon(densities %>% filter(Species == "Jania rosea"),
+                densities %>% filter(Species == "Metamastophora flabellata"),
                 ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50) %>%
     mutate(.frame = .frame + 150),
-  tween_polygon(consumption_dens %>% filter(Season == "Summer"),
-                consumption_dens %>% filter(Season == "Autumn"),
+  tween_polygon(densities %>% filter(Species == "Metamastophora flabellata"),
+                densities %>% filter(Species == "Amphiroa anceps"),
                 ease = "cubic-in-out", nframes = 100) %>%
     keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 300),
-  tween_polygon(consumption_dens %>% filter(Season == "Autumn"),
-                consumption_dens %>% filter(Season == "Prior"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 450)
-) %T>%
-  print()
-
-defecation_dens_ani <- bind_rows(
-  tween_polygon(defecation_dens %>% filter(Season == "Prior"),
-                defecation_dens %>% filter(Season == "Spring"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50),
-  tween_polygon(defecation_dens %>% filter(Season == "Spring"),
-                defecation_dens %>% filter(Season == "Summer"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 150),
-  tween_polygon(defecation_dens %>% filter(Season == "Summer"),
-                defecation_dens %>% filter(Season == "Autumn"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 300),
-  tween_polygon(defecation_dens %>% filter(Season == "Autumn"),
-                defecation_dens %>% filter(Season == "Prior"),
-                ease = "cubic-in-out", nframes = 100) %>%
-    keep_state(nframes = 50) %>%
-    mutate(.frame = .frame + 450)
+    mutate(.frame = .frame + 300)
 ) %T>%
   print()
 
 # 6.7 Dynamic plots ####
+require(gganimate)
+require(ggtext)
 ( ggplot() +
-    geom_textline(data = tibble(x = c(0, 5), y = c(0, 5)), aes(x, y),
+    geom_textline(data = tibble(x = c(0, 0.75), y = c(0, 0.75)), aes(x, y),
                   label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
-    geom_point(data = grazing_points_ani,
-               aes(x = x, y = y, alpha = alpha),
-               shape = 16, size = 2.5, colour = "#7030a5") +
-    geom_line(data = grazing_line_ani,
-              aes(x = x, y = y, colour = colour, group = Season)) +
-    geom_polygon(data = grazing_ribbon_ani,
-                 aes(x = x, y = y, alpha = alpha,
-                     fill = fill, group = alpha)) +
-    geom_polygon(data = consumption_dens_ani,
-                 aes(x = x, y = y, fill = fill)) +
-    geom_polygon(data = defecation_dens_ani,
-                 aes(x = x, y = y, fill = fill)) +
-    geom_text(data = grazing_line_ani %>%
-                distinct(Season, colour, .frame),
-              aes(x = 0.3, y = 4.8, label = Season, colour = colour),
-              hjust = 0, size = 5.3, family = "Futura", fontface = "bold") +
+    geom_polygon(data = ellipses_ani,
+                 aes(x = x, y = y, fill = fill, alpha = alpha, 
+                     group = group, subgroup = subgroup)) +
+    geom_line(data = lines_ani,
+              aes(x = x, y = y, colour = colour)) +
+    geom_polygon(data = ribbons_ani,
+                 aes(x = x, y = y, fill = fill,
+                     alpha = alpha, group = alpha)) +
     scale_alpha_identity() +
     scale_colour_identity() +
     scale_fill_identity() +
-    scale_x_continuous(breaks = seq(0, 10, 2)) +
-    coord_cartesian(xlim = c(0, 10), ylim = c(0, 5),
-                    expand = FALSE, clip = "off") +
-    labs(x = "Consumption (mg g<sup><span style='font-size:8.4pt'>−1</span></sup> 
+    new_scale_fill() +
+    geom_polygon(data = ellipses %>% mutate(x = Inf), # Add new fill geometry for legend
+                 aes(x = x, y = y, fill = Species)) +
+    scale_fill_manual(values = c("#ec7faa", "#f5a54a", "#6b4d8d")) +
+    scale_x_continuous(breaks = seq(0, 2, 0.5),
+                       labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1))) +
+    scale_y_continuous(breaks = seq(0, 0.75, 0.25),
+                       labels = scales::label_number(accuracy = c(1, 0.01, 0.1, 0.01))) +
+    labs(x = "CDR<sub><span style='font-size:8.4pt'>naive</span></sub> (mmol CO<sub><span style=
+         'font-size:8.4pt'>2</span></sub> g<sup><span style='font-size:8.4pt'>−1</span></sup> 
          d<sup><span style='font-size:8.4pt'>−1</span></sup>)",
-         y = "Defecation (mg g<sup><span style='font-size:8.4pt'>−1</span></sup> 
+         y = "CDR<sub><span style='font-size:8.4pt'>true</span></sub> (mmol CO<sub><span style=
+         'font-size:8.4pt'>2</span></sub> g<sup><span style='font-size:8.4pt'>−1</span></sup> 
          d<sup><span style='font-size:8.4pt'>−1</span></sup>)") +
+    coord_cartesian(xlim = c(0, 2), ylim = c(0, 0.75),
+                    expand = FALSE, clip = "off") +
     transition_manual(.frame) +
     mytheme +
     theme(axis.title = element_markdown()) ) %>%
   animate(nframes = 450, duration = 15,
           width = 21 * 1/2, height = 10,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "grazing_left.gif", path = here("Figures", "Animations"))
+  anim_save(filename = "Fig_5a.gif", path = "Figures")
+# The legend doesn't fit in the frame. Plot legend separately.
+# Also make plot a bit shorter.
 
 ( ggplot() +
-    geom_point(data = grazing_jitter_ani,
-               aes(x = x, y = y, alpha = alpha),
-               shape = 16, size = 2.5, colour = "#7030a5") +
-    geom_polygon(data = grazing_dens_ani,
-                 aes(x = x, y = y, fill = fill)) +
+    geom_polygon(data = ellipses %>% mutate(x = Inf, y = Inf),
+                 aes(x = x, y = y, fill = Species)) +
+    scale_fill_manual(values = c("#ec7faa", "#f5a54a", "#6b4d8d")) +
+    mytheme +
+    theme(legend.text = element_text(face = "italic"),
+          axis.title = element_blank()) ) %>%
+  ggsave(filename = "Fig_5_legend.png", path = "Figures",
+         units = "cm", width = 21, height = 1, dpi = 300)
+
+( ggplot() +
+    geom_textline(data = tibble(x = c(0, 0.75), y = c(0, 0.75)), aes(x, y),
+                  label = "1:1", family = "Futura", size = 3.5, hjust = 1) +
+    geom_polygon(data = ellipses_ani,
+                 aes(x = x, y = y, fill = fill, alpha = alpha, 
+                     group = group, subgroup = subgroup)) +
+    geom_line(data = lines_ani,
+              aes(x = x, y = y, colour = colour)) +
+    geom_polygon(data = ribbons_ani,
+                 aes(x = x, y = y, fill = fill,
+                     alpha = alpha, group = alpha)) +
     scale_alpha_identity() +
+    scale_colour_identity() +
     scale_fill_identity() +
-    coord_cartesian(xlim = c(0, 100), ylim = c(-1, 2), 
+    scale_x_continuous(breaks = seq(0, 2, 0.5),
+                       labels = scales::label_number(accuracy = c(1, 0.1, 1, 0.1, 1))) +
+    scale_y_continuous(breaks = seq(0, 0.75, 0.25),
+                       labels = scales::label_number(accuracy = c(1, 0.01, 0.1, 0.01))) +
+    labs(x = "CDR<sub><span style='font-size:8.4pt'>naive</span></sub> (mmol CO<sub><span style=
+         'font-size:8.4pt'>2</span></sub> g<sup><span style='font-size:8.4pt'>−1</span></sup> 
+         d<sup><span style='font-size:8.4pt'>−1</span></sup>)",
+         y = "CDR<sub><span style='font-size:8.4pt'>true</span></sub> (mmol CO<sub><span style=
+         'font-size:8.4pt'>2</span></sub> g<sup><span style='font-size:8.4pt'>−1</span></sup> 
+         d<sup><span style='font-size:8.4pt'>−1</span></sup>)") +
+    coord_cartesian(xlim = c(0, 2), ylim = c(0, 0.75),
                     expand = FALSE, clip = "off") +
-    xlab("Defecation (%)<sup><span style='color:white;font-size:8.4pt'>−1</span></sup>") +
+    transition_manual(.frame) +
+    mytheme +
+    theme(axis.title = element_markdown()) ) %>%
+  animate(nframes = 450, duration = 15,
+          width = 21 * 1/2, height = 9,
+          units = "cm", res = 300, renderer = gifski_renderer()) %>%
+  anim_save(filename = "Fig_5a.gif", path = "Figures")
+
+( ggplot() +
+    geom_polygon(data = densities_ani,
+                 aes(x = x, y = y, fill = fill)) +
+    scale_fill_identity() +
+    coord_cartesian(expand = FALSE, clip = "off") +
+    xlab("CDR loss (%)<sub><span style='color:white;font-size:8.4pt'>2</span></sub>
+         <sup><span style='color:white;font-size:8.4pt'>−1</span></sup>") +
     transition_manual(.frame) +
     mytheme +
     theme(axis.title = element_markdown(),
@@ -964,11 +924,6 @@ defecation_dens_ani <- bind_rows(
           axis.ticks.y = element_blank(),
           axis.line.y = element_blank()) ) %>%
   animate(nframes = 450, duration = 15,
-          width = 21 * 1/2, height = 10,
+          width = 21 * 1/2, height = 9,
           units = "cm", res = 300, renderer = gifski_renderer()) %>%
-  anim_save(filename = "grazing_right.gif", path = here("Figures", "Animations"))
-
-
-
-
-
+  anim_save(filename = "Fig_5b.gif", path = "Figures")
